@@ -193,7 +193,7 @@ def _translate_ytdlp_error(exc: Exception, settings: IngestSettings) -> IngestEr
         "yt-dlp could not download this video.",
         hint=(
             "YouTube changes frequently and yt-dlp is updated often. Try "
-            "`autoclip update-ytdlp` to pull the latest version.\n\n"
+            "`hustlclip update-ytdlp` to pull the latest version.\n\n"
             f"Original error: {exc}"
         ),
     )

@@ -15,7 +15,26 @@ def test_defaults_load_without_a_config_file() -> None:
     assert settings.active_provider == "anthropic"
     assert settings.whisper.model == "small"
     assert settings.export.loudness_lufs == -14.0
-    assert set(settings.providers) == {"anthropic", "openai", "gemini", "ollama"}
+    assert set(settings.providers) == {"anthropic", "openai", "gemini", "ollama", "nvidia", "typesafe"}
+    # The AI manager's defaults: automatic routing, composition off.
+    assert settings.ai.routing == "automatic"
+    assert settings.ai.dynamic_composition is False
+
+
+def test_vendor_standard_env_names_supply_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Hosted notebooks inject secrets under the vendors' own names.
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-from-env")
+    monkeypatch.setenv("TYPESAFE_API_KEY", "ts-from-env")
+
+    assert config.get_secret("nvidia") == "nvapi-from-env"
+    assert config.get_secret("typesafe") == "ts-from-env"
+
+
+def test_hustlclip_env_name_wins_over_vendor_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NVIDIA_API_KEY", "vendor")
+    monkeypatch.setenv("HUSTLCLIP_NVIDIA_KEY", "specific")
+
+    assert config.get_secret("nvidia") == "specific"
 
 
 def test_settings_round_trip() -> None:

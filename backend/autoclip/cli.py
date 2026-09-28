@@ -1,4 +1,4 @@
-"""AutoClip command-line interface."""
+"""HustlClip command-line interface."""
 
 from __future__ import annotations
 
@@ -11,11 +11,11 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from . import __version__, config, paths, system
+from . import __version__, config, paths, product, system
 
 app = typer.Typer(
-    name="autoclip",
-    help="Turn long video into caption-burned 9:16 clips — locally.",
+    name=product.SLUG,
+    help=f"{product.NAME} — {product.TAGLINE} Long video in, captioned vertical clips out.",
     no_args_is_help=True,
     add_completion=False,
 )
@@ -62,8 +62,8 @@ def _ffmpeg_install_hint() -> str:
 
 @app.command()
 def version() -> None:
-    """Print the AutoClip version."""
-    console.print(f"autoclip {__version__}")
+    """Print the HustlClip version."""
+    console.print(f"{product.SLUG} {__version__}")
 
 
 @app.command()
@@ -76,7 +76,7 @@ def doctor() -> None:
     console.print(
         Panel.fit(
             Text.from_markup(
-                f"[bold]AutoClip {__version__}[/bold]\n{report.platform}\nHome: {paths.root()}"
+                f"[bold]{product.NAME} {__version__}[/bold]\n{report.platform}\nHome: {paths.root()}"
             ),
             border_style="cyan",
         )
@@ -141,7 +141,7 @@ def doctor() -> None:
         if not ff.has_libass or "ass" in missing:
             remediation.append(
                 "This ffmpeg build has no libass, so captions cannot be burned in — "
-                f"which is most of what AutoClip does.\n{_ffmpeg_install_hint()}"
+                f"which is most of what HustlClip does.\n{_ffmpeg_install_hint()}"
             )
 
     console.print()
@@ -169,7 +169,7 @@ def doctor() -> None:
         remediation.append(
             "An NVIDIA GPU is present but CTranslate2 can't use it — usually missing cuDNN. "
             "Install the CUDA runtime libraries with "
-            "[cyan]uv pip install 'autoclip[gpu]'[/cyan], then re-run doctor. "
+            "[cyan]uv pip install '.[gpu]'[/cyan], then re-run doctor. "
             "Transcription will fall back to CPU until this is fixed."
         )
     elif gpu.ctranslate2_cuda:
@@ -224,8 +224,8 @@ def doctor() -> None:
     if not deps.whisperx and settings.whisper.diarization:
         remediation.append(
             "Diarization is enabled in settings but WhisperX isn't installed. "
-            "Run [cyan]uv pip install 'autoclip[diarization]'[/cyan] and set a HuggingFace "
-            "token with [cyan]autoclip config set-secret huggingface_token[/cyan]."
+            "Run [cyan]uv pip install '.[diarization]'[/cyan] and set a HuggingFace "
+            "token with [cyan]hustlclip config set-secret huggingface_token[/cyan]."
         )
 
     for missing, extra in (
@@ -235,7 +235,7 @@ def doctor() -> None:
     ):
         if missing:
             remediation.append(
-                f"[cyan]{extra}[/cyan] is not installed — reinstall AutoClip's core "
+                f"[cyan]{extra}[/cyan] is not installed — reinstall HustlClip's core "
                 "dependencies with [cyan]uv pip install -e '.[dev]'[/cyan]."
             )
 
@@ -274,7 +274,7 @@ def doctor() -> None:
     ):
         remediation.append(
             "No LLM provider is usable yet. Add an API key with "
-            "[cyan]autoclip config set-secret anthropic[/cyan] (or openai / gemini), "
+            "[cyan]hustlclip config set-secret anthropic[/cyan] (or openai / gemini), "
             "or install Ollama for a fully local setup."
         )
 
@@ -321,7 +321,7 @@ def doctor() -> None:
         console.print(
             Panel.fit(
                 "[bold red]Not ready.[/bold red] Resolve the items below, then re-run "
-                "[cyan]autoclip doctor[/cyan].",
+                "[cyan]hustlclip doctor[/cyan].",
                 border_style="red",
             )
         )
@@ -336,7 +336,7 @@ def doctor() -> None:
     raise typer.Exit(0 if report.ready else 1)
 
 
-config_app = typer.Typer(help="Inspect and modify AutoClip settings.", no_args_is_help=True)
+config_app = typer.Typer(help="Inspect and modify HustlClip settings.", no_args_is_help=True)
 app.add_typer(config_app, name="config")
 
 
@@ -395,7 +395,7 @@ def config_delete_secret(key: str = typer.Argument(..., help="Secret to remove."
 
 @app.command()
 def init() -> None:
-    """Create the AutoClip home directory and initialise the database."""
+    """Create the HustlClip home directory and initialise the database."""
     from . import db
 
     version_applied = db.init()
@@ -637,7 +637,7 @@ def serve(
         True, "--open/--no-open", help="Open a browser once the server is up."
     ),
 ) -> None:
-    """Start the AutoClip web app."""
+    """Start the HustlClip web app."""
     import threading
     import webbrowser
 
@@ -656,11 +656,11 @@ def serve(
         )
 
     url = f"http://{'localhost' if host in ('127.0.0.1', '0.0.0.0') else host}:{port}"
-    console.print(f"[green]AutoClip[/green] starting on [cyan]{url}[/cyan]")
+    console.print(f"[green]{product.NAME}[/green] starting on [cyan]{url}[/cyan]")
 
     if host == "0.0.0.0":  # noqa: S104
         console.print(
-            "[yellow]Binding to 0.0.0.0 exposes AutoClip to your whole network.[/yellow] "
+            "[yellow]Binding to 0.0.0.0 exposes HustlClip to your whole network.[/yellow] "
             "There is no authentication — only do this on a network you trust."
         )
 

@@ -365,12 +365,24 @@ class TestProviderStatus:
     def test_reports_every_provider(self, client: TestClient, fake_keyring) -> None:
         statuses = client.get("/api/providers/status").json()
 
+        # NVIDIA and TypeSafe (Jev) joined the original four when the AI
+        # manager arrived; every configured provider must be reportable.
         assert {s["name"] for s in statuses} == {
             "anthropic",
             "openai",
             "gemini",
             "ollama",
+            "nvidia",
+            "typesafe",
         }
+
+    def test_status_never_contains_key_values(self, client: TestClient, fake_keyring) -> None:
+        client.put("/api/settings/secrets", json={"key": "typesafe", "value": "ts-DEADBEEF"})
+        client.put("/api/settings/secrets", json={"key": "nvidia", "value": "nvapi-DEADBEEF"})
+
+        body = client.get("/api/providers/status").text
+
+        assert "DEADBEEF" not in body
 
     def test_missing_key_is_reported_as_unavailable(self, client: TestClient, fake_keyring) -> None:
         statuses = {s["name"]: s for s in client.get("/api/providers/status").json()}
@@ -405,7 +417,7 @@ class TestEventStream:
 
 class TestSecretsNeverLeak:
     def test_settings_response_has_no_secret_values(self, client: TestClient, fake_keyring) -> None:
-        for key in ("anthropic", "openai", "gemini"):
+        for key in ("anthropic", "openai", "gemini", "nvidia", "typesafe"):
             client.put("/api/settings/secrets", json={"key": key, "value": f"sk-{key}-DEADBEEF"})
 
         payload = str(client.get("/api/settings").json())

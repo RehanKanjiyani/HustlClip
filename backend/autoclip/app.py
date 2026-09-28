@@ -17,7 +17,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, db, paths
+from . import __version__, db, paths, product
 from .api import api_router
 from .jobs.events import broker
 from .jobs.queue import queue
@@ -59,7 +59,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     else:
         log.info("Job worker disabled by %s=1.", ENV_NO_WORKER)
 
-    log.info("AutoClip %s ready. Artifacts in %s", __version__, paths.root())
+    log.info("%s %s ready. Artifacts in %s", product.NAME, __version__, paths.root())
 
     try:
         yield
@@ -70,9 +70,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     app = FastAPI(
-        title="AutoClip",
+        title=product.NAME,
         version=__version__,
-        description="Local-first AI video clipper.",
+        description=product.DESCRIPTION,
         lifespan=lifespan,
     )
 
@@ -134,8 +134,11 @@ def _mount_frontend(app: FastAPI) -> None:
         if full_path.startswith("api/"):
             return JSONResponse(status_code=404, content={"detail": "Not found."})
 
-        candidate = directory / full_path
-        if full_path and candidate.is_file():
+        # Resolve before checking containment: a path such as ``../config.json``
+        # would otherwise serve files from outside the bundle, including the
+        # settings file when the static dir sits inside the data directory.
+        candidate = (directory / full_path).resolve()
+        if full_path and candidate.is_file() and candidate.is_relative_to(directory.resolve()):
             return FileResponse(candidate)
 
         return FileResponse(directory / "index.html")

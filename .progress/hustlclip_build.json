@@ -1,0 +1,108 @@
+{
+  "objective": "Transform the AutoClip-derived repo into HustlClip per the master spec: multi-stage AI funnel behind a deterministic AI Manager, exactly-N global selection, Jev/NVIDIA/Anthropic providers, phone-first UI, free Kaggle GPU notebook as the primary way to run (user has only an Android phone).",
+  "environment": {
+    "note": "Dev machine is borrowed; all tooling lives in %LOCALAPPDATA%\\Temp\\hustlclip and is deleted at the end. Source of truth is GitHub.",
+    "python": "3.11 via uv, .venv in repo (gitignored)",
+    "test_command": "python -m pytest -q",
+    "frontend_checks": "cd frontend && npx tsc --noEmit -p . && npm run build"
+  },
+  "baseline": {
+    "date": "2026-09-29",
+    "backend": "294 passed, 24 skipped (all skips = e2e tests needing AUTOCLIP_E2E_MEDIA)",
+    "frontend": "tsc clean, vite build ok"
+  },
+  "architecture_decisions": [
+    "Keep python package path backend/autoclip; product identity centralised in autoclip/product.py.",
+    "One AI Manager: autoclip/intelligence/manager.py. Pipeline requests capabilities, never models.",
+    "One model registry: autoclip/intelligence/registry.py; defaults overridable via Settings.ai.",
+    "Provider HTTP logic stays in autoclip/providers/*. NVIDIA = OpenAI-compatible adapter; TypeSafe/Jev = httpx adapter against POST https://api.typesafe.ai/v1/systemone (docs.typesafe.ai/api).",
+    "Decision capabilities (candidate_triage etc.) have two executions: Jev typed questions or LLM JSON; both normalise to the same internal result.",
+    "AI returns word indices / candidate ids only; Python resolves timestamps via boundaries.refine.",
+    "Global selection is deterministic greedy with explicit overlap/topic/type penalties; exact count owned by Python; deterministic sentence-window fallback fills gaps without duplicates.",
+    "Intelligence sub-steps write artifacts under work/{job}/intel/ so AI failures never force re-transcription.",
+    "Primary mobile path: Kaggle free-GPU notebook driven from phone browser. GitHub Actions rejected by user."
+  ],
+  "units": [
+    {
+      "id": "U0",
+      "name": "baseline + tooling",
+      "status": "done"
+    },
+    {
+      "id": "U1",
+      "name": "product identity",
+      "status": "pending"
+    },
+    {
+      "id": "U2",
+      "name": "provider layer: nvidia, typesafe, usage, think-strip, multimodal",
+      "status": "pending"
+    },
+    {
+      "id": "U3",
+      "name": "registry + AI manager + health + decision records (db v2)",
+      "status": "pending"
+    },
+    {
+      "id": "U4",
+      "name": "capability specs + prompts",
+      "status": "pending"
+    },
+    {
+      "id": "U5",
+      "name": "intelligence pipeline: discovery/normalize/triage/score/visual/judge",
+      "status": "pending"
+    },
+    {
+      "id": "U6",
+      "name": "global selection exactly-N + fallback",
+      "status": "pending"
+    },
+    {
+      "id": "U7",
+      "name": "runner integration + job settings snapshot fix",
+      "status": "pending"
+    },
+    {
+      "id": "U8",
+      "name": "API: ai status, download-all, clip details",
+      "status": "pending"
+    },
+    {
+      "id": "U9",
+      "name": "frontend: phone-first flow + branding + settings",
+      "status": "pending"
+    },
+    {
+      "id": "U10",
+      "name": "Kaggle notebook + docs/MOBILE.md + README",
+      "status": "pending"
+    },
+    {
+      "id": "U11",
+      "name": "e2e verification with real media",
+      "status": "pending"
+    },
+    {
+      "id": "U12",
+      "name": "final verification + cleanup of temp folder",
+      "status": "pending"
+    }
+  ],
+  "current_unit": "U1",
+  "files_changed": [],
+  "tests_run": [],
+  "known_failures": [],
+  "unresolved_decisions": [
+    "Kimi K3 / DeepSeek V4.1 Flash image-input support unverified without an NVIDIA key; handled as unsupported_modality fallback.",
+    "Live provider tests need user keys; normal tests are mocked."
+  ],
+  "next_action": "U1 product identity",
+  "cleanup_checklist": [
+    "gh auth logout --hostname github.com (token is in Windows Credential Manager, NOT the temp folder)",
+    "Remove %LOCALAPPDATA%\\Temp\\hustlclip (tools, caches, venv, clone)",
+    "Verify C:\\Users\\Administrator\\.local was removed (uv python shim) - done 2026-09-29",
+    "Verify no HustlClip/AutoClip entries left in Windows Credential Manager (keyring service 'autoclip')",
+    "Scratch workspace is app-managed; leave empty"
+  ]
+}

@@ -1,0 +1,9 @@
+You check pairs of short-form clips cut from the same long video. For each pair, decide whether posting both would feel repetitive to a follower: they tell the same story, make the same point, or retell the same moment.
+
+Two clips on the same broad subject that make clearly different points are NOT duplicates.
+
+For each pair return same_story: the probability (0-1) that they are repetitive. Use the pair ids exactly as given.
+
+Respond with ONLY this JSON object:
+
+{"pairs": [{"a": "c100_180", "b": "c900_990", "same_story": 0.15}]}

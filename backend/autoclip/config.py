@@ -7,7 +7,7 @@ on macOS, Secret Service on Linux.
 
 If no keyring backend is available (headless Linux, some Docker images), we fall
 back to writing secrets into ``config.json`` with restrictive permissions and
-set :attr:`Settings.insecure_secret_storage` so the UI and ``autoclip doctor``
+set :attr:`Settings.insecure_secret_storage` so the UI and ``hustlclip doctor``
 can warn about it. Silently downgrading security without telling the user is the
 thing we're trying to avoid.
 """
@@ -34,13 +34,59 @@ KEYRING_SERVICE = "autoclip"
 #: stored under the old name aren't silently lost; writes always use the new one.
 LEGACY_KEYRING_SERVICE = "clipforge"
 
-ProviderName = Literal["anthropic", "openai", "gemini", "ollama"]
+ProviderName = Literal["anthropic", "openai", "gemini", "ollama", "nvidia"]
 
 #: Providers that authenticate with an API key. Ollama runs locally and needs none.
-KEYED_PROVIDERS: tuple[str, ...] = ("anthropic", "openai", "gemini")
+#: ``typesafe`` (Jev) is a decision provider rather than a text generator, but
+#: its key is stored exactly like every other provider's.
+KEYED_PROVIDERS: tuple[str, ...] = ("anthropic", "openai", "gemini", "nvidia", "typesafe")
 
 #: Extra secrets that aren't tied to a provider.
 HF_TOKEN_KEY = "huggingface_token"
+
+#: The environment variable names each vendor documents. Honoured after the
+#: HustlClip-specific override so hosted notebooks (Kaggle/Colab secrets) and
+#: containers can inject keys without touching config files.
+STANDARD_ENV_NAMES: dict[str, str] = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "gemini": "GEMINI_API_KEY",
+    "nvidia": "NVIDIA_API_KEY",
+    "typesafe": "TYPESAFE_API_KEY",
+    HF_TOKEN_KEY: "HF_TOKEN",
+}
+
+RoutingStrategy = Literal["automatic", "efficiency", "quality", "custom"]
+
+
+class ModelOverride(BaseModel):
+    """User changes to one model registry entry. Unset fields keep defaults."""
+
+    enabled: bool | None = None
+    #: The provider's model identifier, for when a catalogue renames a model.
+    api_model: str | None = None
+
+
+class AISettings(BaseModel):
+    """Advanced routing for the AI manager. Defaults need no attention."""
+
+    routing: RoutingStrategy = "automatic"
+    #: Provider names switched off entirely.
+    disabled_providers: list[str] = Field(default_factory=list)
+    #: Per-model overrides keyed by registry id (e.g. "nvidia/kimi-k3").
+    models: dict[str, ModelOverride] = Field(default_factory=dict)
+    #: For routing == "custom": capability -> ordered registry ids to try first.
+    preferred: dict[str, list[str]] = Field(default_factory=dict)
+    #: Hard ceiling on provider-reported tokens (input + output) per job.
+    #: 0 means no ceiling.
+    job_token_budget: int = 0
+    #: Look at frames of promising candidates with a vision model.
+    visual_analysis: bool = True
+    #: How many candidates may get visual analysis per job.
+    max_visual_candidates: int = 8
+    #: Optional AI-chosen layouts. Off by default; standard mode is 9:16
+    #: reframing + captions + loudness normalisation.
+    dynamic_composition: bool = False
 
 
 class ProviderSettings(BaseModel):
@@ -100,12 +146,17 @@ class Settings(BaseModel):
     active_provider: ProviderName = "anthropic"
     providers: dict[str, ProviderSettings] = Field(
         default_factory=lambda: {
-            "anthropic": ProviderSettings(model="claude-sonnet-5"),
+            "anthropic": ProviderSettings(model="claude-opus-5"),
             "openai": ProviderSettings(model="gpt-4o"),
             "gemini": ProviderSettings(model="gemini-2.0-flash"),
             "ollama": ProviderSettings(model="", base_url="http://localhost:11434"),
+            # Model choice for these two lives in the AI model registry; the
+            # entries exist for base-URL overrides.
+            "nvidia": ProviderSettings(model="", base_url="https://integrate.api.nvidia.com/v1"),
+            "typesafe": ProviderSettings(model="jev-latest", base_url="https://api.typesafe.ai"),
         }
     )
+    ai: AISettings = Field(default_factory=AISettings)
     whisper: WhisperSettings = Field(default_factory=WhisperSettings)
     clips: ClipSettings = Field(default_factory=ClipSettings)
     ingest: IngestSettings = Field(default_factory=IngestSettings)
@@ -197,9 +248,14 @@ def get_secret(key: str, settings: Settings | None = None) -> str | None:
 
     ``key`` is a provider name for API keys, or :data:`HF_TOKEN_KEY`.
     """
-    env_override = os.environ.get(f"AUTOCLIP_{key.upper()}_KEY")
-    if env_override:
-        return env_override
+    for env_name in (
+        f"HUSTLCLIP_{key.upper()}_KEY",
+        f"AUTOCLIP_{key.upper()}_KEY",
+        STANDARD_ENV_NAMES.get(key, ""),
+    ):
+        env_override = os.environ.get(env_name) if env_name else None
+        if env_override and env_override.strip():
+            return env_override.strip()
 
     kr = _keyring()
     if kr is not None:

@@ -24,6 +24,16 @@ def autoclip_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[P
     """Point AUTOCLIP_HOME at a throwaway directory for every test."""
     home = tmp_path / "autoclip_home"
     monkeypatch.setenv(paths.ENV_HOME, str(home))
+    # A developer's real API keys must never reach a test: vendor-standard
+    # variables are honoured by config.get_secret, so clear them all.
+    for key in (*config.KEYED_PROVIDERS, config.HF_TOKEN_KEY):
+        for name in (
+            f"HUSTLCLIP_{key.upper()}_KEY",
+            f"AUTOCLIP_{key.upper()}_KEY",
+            config.STANDARD_ENV_NAMES.get(key, ""),
+        ):
+            if name:
+                monkeypatch.delenv(name, raising=False)
     db.reset_connections()
     system.report.cache_clear()
     yield home

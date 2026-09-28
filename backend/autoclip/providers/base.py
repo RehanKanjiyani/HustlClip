@@ -1,8 +1,9 @@
 """LLM provider abstraction.
 
-Highlight detection is the one place AutoClip asks a language model to make a
-judgement call, so the interface is deliberately narrow: a window of transcript
-goes in, a validated list of clip candidates comes out.
+Providers are thin adapters: they own the provider-specific HTTP/SDK details
+and translate failures into a :class:`ProviderError` with an
+:class:`ErrorCategory`. Routing, retry policy, and fallback between models live
+in :mod:`autoclip.intelligence.manager`, never here.
 
 Two design choices carry most of the weight:
 
@@ -19,11 +20,13 @@ inherits it.
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -34,13 +37,50 @@ log = logging.getLogger(__name__)
 PROMPT_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
 
+class ErrorCategory(StrEnum):
+    """Why a provider call failed.
+
+    The AI manager decides between retry, cooldown, and fallback from this
+    alone, so adapters classify at the point where they still know the
+    provider-specific details (status codes, SDK exception types).
+    """
+
+    TIMEOUT = "timeout"
+    CONNECTION = "connection"
+    RATE_LIMIT = "rate_limit"
+    AUTH = "authentication_failed"
+    UNAVAILABLE = "provider_unavailable"
+    MODEL_UNAVAILABLE = "model_unavailable"
+    MALFORMED = "malformed_response"
+    SCHEMA = "schema_failure"
+    INCOMPLETE = "incomplete_response"
+    INVALID_REFERENCES = "invalid_references"
+    INVALID_SCORES = "invalid_scores"
+    BUDGET = "token_budget_exceeded"
+    UNSUPPORTED_MODALITY = "unsupported_modality"
+    NOT_CONFIGURED = "not_configured"
+    BAD_REQUEST = "bad_request"
+    REFUSAL = "refusal"
+    INTERNAL = "internal_provider_failure"
+
+
 class ProviderError(RuntimeError):
     """A provider could not produce a usable response."""
 
-    def __init__(self, message: str, *, provider: str = "", hint: str = "") -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        provider: str = "",
+        hint: str = "",
+        category: ErrorCategory = ErrorCategory.INTERNAL,
+        retry_after_s: float | None = None,
+    ) -> None:
         super().__init__(message)
         self.provider = provider
         self.hint = hint
+        self.category = category
+        self.retry_after_s = retry_after_s
 
     def __str__(self) -> str:
         base = super().__str__()
@@ -126,18 +166,58 @@ class ProviderStatus:
     models: list[str] = field(default_factory=list)
 
 
+@dataclass
+class ImageInput:
+    """One still frame for a vision-capable model."""
+
+    data: bytes
+    media_type: str = "image/jpeg"
+
+    def b64(self) -> str:
+        return base64.standard_b64encode(self.data).decode("ascii")
+
+
+@dataclass
+class GenerationRequest:
+    """A provider-neutral text (or text + images) generation request."""
+
+    system: str
+    user: str
+    #: None means "send no sampling parameter" — several current models reject
+    #: temperature outright.
+    temperature: float | None = 0.2
+    max_tokens: int = 8000
+    images: list[ImageInput] = field(default_factory=list)
+    #: Provider-specific extras from the model registry (e.g. Claude effort).
+    options: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class Completion:
+    text: str
+    model: str = ""
+    #: Token counts exactly as the provider reported them. None when the
+    #: provider does not expose usage — never estimated.
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    stop_reason: str | None = None
+
+
 # --------------------------------------------------------------------------
 # Base provider
 # --------------------------------------------------------------------------
 
 
 class LLMProvider(ABC):
-    """Base class for highlight-detection providers."""
+    """Base class for text-generating providers."""
 
     #: Stable identifier, matching the key used in settings.
     name: str = ""
     #: Whether the provider needs an API key.
     requires_key: bool = True
+    #: Whether :meth:`generate` accepts images. Adapters that implement vision
+    #: set this; the model registry still decides per model.
+    supports_images: bool = False
 
     def __init__(self, model: str, *, api_key: str | None = None, base_url: str | None = None):
         self.model = model
@@ -153,6 +233,30 @@ class LLMProvider(ABC):
     @abstractmethod
     async def health_check(self) -> ProviderStatus:
         """Report whether this provider is usable right now."""
+
+    # -- generic generation -------------------------------------------------
+
+    async def generate(self, request: GenerationRequest) -> Completion:
+        """Run one generation request.
+
+        The default wraps :meth:`_complete`, which reports no usage. Adapters
+        whose API exposes token counts override this so the AI manager can
+        record real numbers instead of guesses.
+        """
+        if request.images and not self.supports_images:
+            raise ProviderError(
+                f"{self.name} does not accept image input.",
+                provider=self.name,
+                category=ErrorCategory.UNSUPPORTED_MODALITY,
+            )
+        text = await self._complete(
+            request.system,
+            request.user,
+            DetectionConfig(
+                temperature=request.temperature if request.temperature is not None else 0.3
+            ),
+        )
+        return Completion(text=text, model=self.model)
 
     # -- shared behaviour --------------------------------------------------
 
@@ -186,6 +290,7 @@ class LLMProvider(ABC):
                 raise ProviderError(
                     f"{self.name} returned malformed clip data twice.",
                     provider=self.name,
+                    category=ErrorCategory.MALFORMED,
                     hint=(
                         f"Last validation error: {second_error}\n\n"
                         "Smaller local models struggle with strict JSON. Try a larger "
@@ -223,6 +328,7 @@ def load_prompt(version: str) -> str:
     if not path.exists():
         raise ProviderError(
             f"Prompt '{version}' not found at {path}.",
+            category=ErrorCategory.NOT_CONFIGURED,
             hint="Prompt files live in backend/autoclip/prompts/ as versioned .txt files.",
         )
     return path.read_text(encoding="utf-8")
@@ -251,16 +357,32 @@ def render_window_prompt(window: TranscriptWindow, config: DetectionConfig) -> s
 
 _JSON_FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
 
+#: Reasoning models served over OpenAI-compatible APIs often inline their chain
+#: of thought. Braces inside it would otherwise be mistaken for the answer.
+_THINK_BLOCK = re.compile(r"<(think|thinking|reasoning)>.*?</\1>", re.DOTALL | re.IGNORECASE)
+_THINK_CLOSE = re.compile(r"</(think|thinking|reasoning)>", re.IGNORECASE)
+
+
+def strip_reasoning(raw: str) -> str:
+    """Remove inline reasoning blocks, keeping only the final answer text."""
+    text = _THINK_BLOCK.sub("", raw)
+    # An opening tag whose close was emitted but whose opener was cut (or a
+    # server that strips only the opener) leaves the answer after the last close.
+    closes = list(_THINK_CLOSE.finditer(text))
+    if closes:
+        text = text[closes[-1].end() :]
+    return text.strip()
+
 
 def extract_json_object(raw: str) -> dict[str, Any]:
     """Pull a JSON object out of a model response.
 
-    Handles the three things models do despite being told not to: wrap the JSON
-    in markdown fences, prepend an explanatory sentence, and append a trailing
-    note. Falls back to brace matching so a stray character outside the object
-    doesn't cost a retry round-trip.
+    Handles the things models do despite being told not to: think out loud
+    before answering, wrap the JSON in markdown fences, prepend an explanatory
+    sentence, and append a trailing note. Falls back to brace matching so a
+    stray character outside the object doesn't cost a retry round-trip.
     """
-    text = raw.strip()
+    text = strip_reasoning(raw or "")
     if not text:
         raise ValueError("The provider returned an empty response.")
 

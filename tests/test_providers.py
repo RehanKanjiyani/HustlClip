@@ -195,10 +195,20 @@ class TestDetectionLoop:
 
 
 class TestRegistry:
-    def test_all_four_providers_are_registered(self) -> None:
-        from autoclip.providers import PROVIDERS
+    def test_all_text_providers_are_registered(self) -> None:
+        from autoclip.providers import DECISION_PROVIDERS, PROVIDERS
 
-        assert set(PROVIDERS) == {"anthropic", "openai", "gemini", "ollama"}
+        assert set(PROVIDERS) == {"anthropic", "openai", "gemini", "ollama", "nvidia"}
+        assert set(DECISION_PROVIDERS) == {"typesafe"}
+
+    def test_nvidia_defaults_to_its_hosted_endpoint(self) -> None:
+        from autoclip.providers import NvidiaProvider
+
+        provider = NvidiaProvider("z-ai/glm-5.3-flash", api_key="k")
+
+        assert provider.base_url == "https://integrate.api.nvidia.com/v1"
+        # Hosted catalogues truncate JSON without an explicit completion limit.
+        assert provider.send_max_tokens is True
 
     def test_ollama_needs_no_key(self) -> None:
         from autoclip.providers import OllamaProvider

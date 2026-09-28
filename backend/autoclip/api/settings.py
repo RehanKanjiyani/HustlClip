@@ -8,7 +8,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 
 from .. import config, models, system
-from ..providers import PROVIDERS, build_provider
+from ..providers import DECISION_PROVIDERS, PROVIDERS, build_decision_provider, build_provider
 from ..providers.base import ProviderStatus
 from .schemas import ProviderStatusOut, SecretIn, SettingsIn, SettingsOut, SystemOut
 
@@ -127,7 +127,27 @@ async def providers_status() -> list[ProviderStatusOut]:
             has_key=has_key,
         )
 
-    return list(await asyncio.gather(*(check(name) for name in PROVIDERS)))
+    async def check_decision(name: str) -> ProviderStatusOut:
+        has_key = config.get_secret(name, settings) is not None
+        try:
+            status = await build_decision_provider(name, settings).health_check()
+        except Exception as exc:
+            status = ProviderStatus(name=name, available=False, detail=str(exc)[:200])
+        return ProviderStatusOut(
+            name=name,
+            available=status.available,
+            detail=status.detail,
+            models=status.models,
+            requires_key=True,
+            has_key=has_key,
+        )
+
+    return list(
+        await asyncio.gather(
+            *(check(name) for name in PROVIDERS),
+            *(check_decision(name) for name in DECISION_PROVIDERS),
+        )
+    )
 
 
 @router.get("/system", response_model=SystemOut)
