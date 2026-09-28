@@ -17,7 +17,11 @@ class Stage(StrEnum):
 
     PREPARE = "prepare"
     TRANSCRIBE = "transcribe"
+    #: Candidate discovery + normalisation. The value is kept from the
+    #: pre-HustlClip single highlight stage so existing job rows stay valid.
     HIGHLIGHTS = "highlights"
+    EVALUATE = "evaluate"
+    SELECT = "select"
     REFRAME = "reframe"
     CAPTIONS = "captions"
     EXPORT = "export"
@@ -25,12 +29,14 @@ class Stage(StrEnum):
     @property
     def label(self) -> str:
         return {
-            Stage.PREPARE: "Preparing media",
+            Stage.PREPARE: "Preparing",
             Stage.TRANSCRIBE: "Transcribing",
-            Stage.HIGHLIGHTS: "Finding highlights",
-            Stage.REFRAME: "Reframing to vertical",
-            Stage.CAPTIONS: "Generating captions",
-            Stage.EXPORT: "Exporting clips",
+            Stage.HIGHLIGHTS: "Finding moments",
+            Stage.EVALUATE: "Evaluating moments",
+            Stage.SELECT: "Selecting the best clips",
+            Stage.REFRAME: "Reframing",
+            Stage.CAPTIONS: "Adding captions",
+            Stage.EXPORT: "Rendering",
         }[self]
 
 

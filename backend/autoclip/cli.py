@@ -76,7 +76,8 @@ def doctor() -> None:
     console.print(
         Panel.fit(
             Text.from_markup(
-                f"[bold]{product.NAME} {__version__}[/bold]\n{report.platform}\nHome: {paths.root()}"
+                f"[bold]{product.NAME} {__version__}[/bold]\n{report.platform}\n"
+                f"Home: {paths.root()}"
             ),
             border_style="cyan",
         )

@@ -28,13 +28,13 @@ import pytest
 from autoclip.config import Settings
 from autoclip.db import store
 from autoclip.db.models import Job, new_id
+from autoclip.intelligence import capabilities as caps
 from autoclip.pipeline import Stage, ingest
 from autoclip.pipeline.export import ratio_dimensions
 from autoclip.pipeline.ffmpeg import probe
 from autoclip.pipeline.reframe.croppath import CropPath
 from autoclip.pipeline.runner import JobWorkspace, PipelineRunner
 from autoclip.pipeline.transcript import Transcript
-from autoclip.providers import ClipCandidates, DetectionConfig, LLMProvider, ProviderStatus
 
 pytestmark = [pytest.mark.slow, pytest.mark.e2e]
 
@@ -51,69 +51,76 @@ def media_path() -> Path:
     return path
 
 
-class ScriptedProvider(LLMProvider):
-    """Stands in for the LLM, returning spans anchored to the real transcript.
+class _Result:
+    def __init__(self, output) -> None:
+        self.output = output
+        self.provider = "scripted"
+        self.model = "scripted"
+        self.fallback_used = False
+        self.records: list = []
 
-    Deliberately returns two overlapping candidates and one that is far too
-    short, so dedupe and duration clamping are exercised rather than bypassed.
+
+class ScriptedManager:
+    """Stands in for the AI manager, answering from the real transcript.
+
+    Discovery deliberately returns two overlapping candidates and one that is
+    far too short, so dedupe and duration clamping are exercised rather than
+    bypassed. Scoring and judgment answer every candidate they are shown, so
+    the whole funnel runs; titles are left blank so discovery titles survive.
     """
 
-    name = "scripted"
-    requires_key = False
-
     def __init__(self) -> None:
-        super().__init__("scripted-model")
         self.calls = 0
 
-    async def _complete(self, system: str, user: str, config: DetectionConfig) -> str:
-        raise AssertionError("detect_highlights is overridden; _complete is unused")
+    def available(self, capability: str) -> bool:
+        return capability in (caps.CANDIDATE_DISCOVERY, caps.TEXT_SCORING, caps.FINAL_JUDGMENT)
 
-    async def health_check(self) -> ProviderStatus:
-        return ProviderStatus(name=self.name, available=True)
-
-    async def detect_highlights(self, window, config) -> ClipCandidates:
+    async def run(self, capability: str, payload):
         self.calls += 1
-        first, last = window.first_word, window.last_word
-        span = max(1, (last - first) // 4)
+        if capability == caps.CANDIDATE_DISCOVERY:
+            return _Result(self._discover(payload))
+        if capability == caps.TEXT_SCORING:
+            return _Result(
+                {
+                    item.candidate_id: caps.CandidateScore(
+                        dimensions=dict.fromkeys(caps.SCORE_DIMENSIONS, 7.0),
+                        overall=0.7,
+                        moment_type="insight",
+                        topic="",
+                        title="",
+                        self_contained=True,
+                    )
+                    for item in payload.items
+                }
+            )
+        if capability == caps.FINAL_JUDGMENT:
+            return _Result(
+                {
+                    item.candidate_id: caps.Verdict(keep=True, score=0.8, title="", reason="kept")
+                    for item in payload.finalists
+                }
+            )
+        raise AssertionError(f"unexpected capability {capability}")
 
-        return ClipCandidates.model_validate(
-            {
-                "clips": [
-                    {
-                        "start_word_index": first,
-                        "end_word_index": min(last, first + span),
-                        "title": "Opening stretch",
-                        "hook": "first words",
-                        "score": 91,
-                        "reason": "Scripted candidate covering the start of the window.",
-                    },
-                    {
-                        # Overlaps the first by design — dedupe must drop it.
-                        "start_word_index": first + span // 4,
-                        "end_word_index": min(last, first + span),
-                        "title": "Overlapping duplicate",
-                        "score": 60,
-                        "reason": "Should be removed by dedupe.",
-                    },
-                    {
-                        "start_word_index": min(last - 1, first + 2 * span),
-                        "end_word_index": min(last, first + 3 * span),
-                        "title": "Later stretch",
-                        "hook": "second span",
-                        "score": 78,
-                        "reason": "Scripted candidate from later in the window.",
-                    },
-                    {
-                        # Two words long — must be dropped or extended, never
-                        # exported as a sub-second clip.
-                        "start_word_index": first,
-                        "end_word_index": min(last, first + 2),
-                        "title": "Far too short",
-                        "score": 55,
-                        "reason": "Should not survive duration clamping.",
-                    },
-                ]
-            }
+    def _discover(self, request: caps.DiscoveryRequest) -> caps.DiscoveryResult:
+        first, last = request.first_word, request.last_word
+        span = max(1, (last - first) // 4)
+        spans = [
+            (first, min(last, first + span), "Opening stretch", 0.91),
+            # Overlaps the first by design — dedupe must drop it.
+            (first + span // 4, min(last, first + span), "Overlapping duplicate", 0.60),
+            (min(last - 1, first + 2 * span), min(last, first + 3 * span), "Later stretch", 0.78),
+            # Two words long — must be dropped or extended, never exported as a
+            # sub-second clip.
+            (first, min(last, first + 2), "Far too short", 0.55),
+        ]
+        return caps.DiscoveryResult(
+            content_type="general",
+            candidates=[
+                caps.DiscoveredCandidate(start, end, "insight", score, title=title, hook="h")
+                for start, end, title, score in spans
+                if end > start
+            ],
         )
 
 
@@ -160,9 +167,9 @@ def pipeline_result(autoclip_home):
 
     job = store.create_job(Job(id=new_id(), source_id=source.id, provider="scripted", settings={}))
 
-    provider = ScriptedProvider()
-    original = runner_module.build_provider
-    runner_module.build_provider = lambda *args, **kwargs: provider
+    provider = ScriptedManager()
+    original = runner_module.build_manager
+    runner_module.build_manager = lambda *args, **kwargs: provider
 
     events: list = []
     try:
@@ -171,7 +178,7 @@ def pipeline_result(autoclip_home):
 
         clips = asyncio.run(pipeline_runner.run())
     finally:
-        runner_module.build_provider = original
+        runner_module.build_manager = original
 
     return {
         "source": source,
@@ -232,6 +239,23 @@ class TestTranscription:
 class TestClipSelection:
     def test_clips_were_produced(self, pipeline_result) -> None:
         assert len(pipeline_result["clips"]) > 0
+
+    def test_exactly_the_configured_count(self, pipeline_result) -> None:
+        # Python owns the count: the scripted discovery proposes a different
+        # number per window, and selection must still land on the target.
+        assert len(pipeline_result["clips"]) == pipeline_result["settings"].clips.max_clips
+
+    def test_selected_clips_are_distinct(self, pipeline_result) -> None:
+        clips = sorted(pipeline_result["clips"], key=lambda c: c.start_s)
+
+        for earlier, later in zip(clips, clips[1:], strict=False):
+            overlap = max(0.0, earlier.end_s - later.start_s)
+            assert overlap <= 0.15 * min(earlier.duration_s, later.duration_s) + 0.01
+
+    def test_decision_trail_lives_in_the_clip_details(self, pipeline_result) -> None:
+        for clip in pipeline_result["clips"]:
+            assert clip.details["tier"] in {"judged_keep", "scored", "fallback", "discovered"}
+            assert "selection" in clip.details
 
     def test_overlapping_duplicate_was_deduped(self, pipeline_result) -> None:
         titles = {clip.title for clip in pipeline_result["clips"]}
@@ -380,9 +404,9 @@ class TestResume:
         # new job id would get a fresh workspace and prove nothing.
         job = pipeline_result["job"]
 
-        provider = ScriptedProvider()
-        original = runner_module.build_provider
-        runner_module.build_provider = lambda *args, **kwargs: provider
+        provider = ScriptedManager()
+        original = runner_module.build_manager
+        runner_module.build_manager = lambda *args, **kwargs: provider
         try:
             import asyncio
 
@@ -391,7 +415,7 @@ class TestResume:
             )
             asyncio.run(runner.run())
         finally:
-            runner_module.build_provider = original
+            runner_module.build_manager = original
 
         assert workspace.transcript.stat().st_mtime == transcript_mtime
         assert provider.calls == 0, "Highlight detection re-ran despite existing clips."

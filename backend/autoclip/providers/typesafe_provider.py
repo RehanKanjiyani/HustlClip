@@ -232,7 +232,8 @@ def parse_response(
             )
         answers[key] = _parse_answer(key, kind, raw, question)
 
-    usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+    raw_usage = payload.get("usage")
+    usage: dict[str, Any] = raw_usage if isinstance(raw_usage, dict) else {}
     return DecisionResponse(
         model=str(payload.get("model") or fallback_model),
         answers=answers,

@@ -293,9 +293,21 @@ class AIManager:
             if budget and self.tokens_used >= budget:
                 last_category = ErrorCategory.BUDGET
                 records.append(
-                    self._record(capability, entry, attempt + 1, entry is not first_choice,
-                                 fallback_reason, None, None, None, None, None, "skipped",
-                                 ErrorCategory.BUDGET, "job token budget exhausted")
+                    self._record(
+                        capability,
+                        entry,
+                        attempt + 1,
+                        entry is not first_choice,
+                        fallback_reason,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        "skipped",
+                        ErrorCategory.BUDGET,
+                        "job token budget exhausted",
+                    )
                 )
                 break
 
@@ -315,15 +327,28 @@ class AIManager:
                     last_category = exc.category
                     schema_ok = exc.category not in (ErrorCategory.MALFORMED, ErrorCategory.SCHEMA)
                     records.append(
-                        self._record(capability, entry, attempt, is_fallback, fallback_reason,
-                                     latency, getattr(exc, "tokens_in", None),
-                                     getattr(exc, "tokens_out", None), schema_ok, False,
-                                     "invalid", exc.category, str(exc)[:300])
+                        self._record(
+                            capability,
+                            entry,
+                            attempt,
+                            is_fallback,
+                            fallback_reason,
+                            latency,
+                            getattr(exc, "tokens_in", None),
+                            getattr(exc, "tokens_out", None),
+                            schema_ok,
+                            False,
+                            "invalid",
+                            exc.category,
+                            str(exc)[:300],
+                        )
                     )
                     self.health.quality_strike(entry, capability)
-                    if exc.retryable and tries <= entry.max_retries and self.health.usable(
-                        entry, capability
-                    )[0]:
+                    if (
+                        exc.retryable
+                        and tries <= entry.max_retries
+                        and self.health.usable(entry, capability)[0]
+                    ):
                         repair = str(exc)
                         continue
                     fallback_reason = f"{entry.id}: {exc.category.value}"
@@ -332,9 +357,21 @@ class AIManager:
                     latency = int((time.perf_counter() - started) * 1000)
                     last_category = exc.category
                     records.append(
-                        self._record(capability, entry, attempt, is_fallback, fallback_reason,
-                                     latency, None, None, None, None, "error", exc.category,
-                                     _safe_detail(exc))
+                        self._record(
+                            capability,
+                            entry,
+                            attempt,
+                            is_fallback,
+                            fallback_reason,
+                            latency,
+                            None,
+                            None,
+                            None,
+                            None,
+                            "error",
+                            exc.category,
+                            _safe_detail(exc),
+                        )
                     )
                     retry_same = self._handle_provider_error(entry, capability, exc, tries)
                     if retry_same:
@@ -346,9 +383,21 @@ class AIManager:
                     self.tokens_used += (tokens_in or 0) + (tokens_out or 0)
                     self.health.success(entry)
                     records.append(
-                        self._record(capability, entry, attempt, is_fallback, fallback_reason,
-                                     latency, tokens_in, tokens_out, True, True, "success",
-                                     None, spec.describe(payload))
+                        self._record(
+                            capability,
+                            entry,
+                            attempt,
+                            is_fallback,
+                            fallback_reason,
+                            latency,
+                            tokens_in,
+                            tokens_out,
+                            True,
+                            True,
+                            "success",
+                            None,
+                            spec.describe(payload),
+                        )
                     )
                     return CapabilityResult(
                         output=output,
@@ -389,10 +438,8 @@ class AIManager:
                 return True
             self.health.cooldown(entry, exc.retry_after_s or TRANSIENT_COOLDOWN_S, COOLING_DOWN)
             return False
-        if category in _RETRYABLE and tries <= entry.max_retries:
-            return True
         # BAD_REQUEST, REFUSAL, BUDGET, INTERNAL: never loop on these.
-        return False
+        return category in _RETRYABLE and tries <= entry.max_retries
 
     async def _execute(
         self, entry: ModelEntry, spec: caps.CapabilitySpec, payload: Any, repair: str | None
@@ -426,7 +473,9 @@ class AIManager:
                 responses = await asyncio.gather(*(ask(s, q) for s, q in requests))
             except TimeoutError as exc:
                 raise ProviderError(
-                    f"{entry.id} timed out.", provider=entry.provider, category=ErrorCategory.TIMEOUT
+                    f"{entry.id} timed out.",
+                    provider=entry.provider,
+                    category=ErrorCategory.TIMEOUT,
                 ) from exc
             tokens_in = _sum_or_none(r.input_tokens for r in responses)
             tokens_out = _sum_or_none(r.output_tokens for r in responses)
@@ -469,7 +518,12 @@ class AIManager:
             exc.tokens_out = completion.output_tokens  # type: ignore[attr-defined]
             self.tokens_used += (completion.input_tokens or 0) + (completion.output_tokens or 0)
             raise
-        return output, completion.model or entry.api_model, completion.input_tokens, completion.output_tokens
+        return (
+            output,
+            completion.model or entry.api_model,
+            completion.input_tokens,
+            completion.output_tokens,
+        )
 
     def _provider(self, entry: ModelEntry) -> Any:
         provider = self._providers.get(entry.id)
@@ -547,11 +601,17 @@ _FRIENDLY = {
         "model; retry the job in a few minutes."
     ),
     ErrorCategory.AUTH: "An AI provider rejected its API key. Check the key in Settings.",
-    ErrorCategory.NOT_CONFIGURED: "No AI provider is configured for this step. Add an API key in Settings.",
+    ErrorCategory.NOT_CONFIGURED: (
+        "No AI provider is configured for this step. Add an API key in Settings."
+    ),
     ErrorCategory.TIMEOUT: "The AI providers did not respond in time. Retry the job.",
-    ErrorCategory.CONNECTION: "HustlClip could not reach any AI provider. Check the internet connection.",
+    ErrorCategory.CONNECTION: (
+        "HustlClip could not reach any AI provider. Check the internet connection."
+    ),
     ErrorCategory.UNAVAILABLE: "The AI providers are temporarily unavailable. Retry the job later.",
-    ErrorCategory.BUDGET: "The job reached its AI token budget. Raise the limit in Settings or retry.",
+    ErrorCategory.BUDGET: (
+        "The job reached its AI token budget. Raise the limit in Settings or retry."
+    ),
 }
 
 

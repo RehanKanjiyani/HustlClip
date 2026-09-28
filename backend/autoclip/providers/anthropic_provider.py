@@ -165,7 +165,9 @@ def _translate(exc: Exception, provider: str, model: str) -> ProviderError:
 
     # APITimeoutError subclasses APIConnectionError, so it must be checked first.
     if isinstance(exc, anthropic.APITimeoutError):
-        return ProviderError("Anthropic timed out.", provider=provider, category=ErrorCategory.TIMEOUT)
+        return ProviderError(
+            "Anthropic timed out.", provider=provider, category=ErrorCategory.TIMEOUT
+        )
     if isinstance(exc, anthropic.APIConnectionError):
         return ProviderError(
             "Could not reach Anthropic.", provider=provider, category=ErrorCategory.CONNECTION

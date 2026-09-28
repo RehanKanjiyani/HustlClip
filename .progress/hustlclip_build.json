@@ -20,7 +20,11 @@
     "AI returns word indices / candidate ids only; Python resolves timestamps via boundaries.refine.",
     "Global selection is deterministic greedy with explicit overlap/topic/type penalties; exact count owned by Python; deterministic sentence-window fallback fills gaps without duplicates.",
     "Intelligence sub-steps write artifacts under work/{job}/intel/ so AI failures never force re-transcription.",
-    "Primary mobile path: Kaggle free-GPU notebook driven from phone browser. GitHub Actions rejected by user."
+    "Primary mobile path: Kaggle free-GPU notebook driven from phone browser. GitHub Actions rejected by user.",
+    "Stages: prepare, transcribe, highlights(=discovery), evaluate, select, reframe, captions, export. 'highlights' value kept for old job rows.",
+    "Job settings: creative sections from the job snapshot, provider/AI routing from current settings (fixes queue ignoring per-job overrides).",
+    "Selection hard constraint MAX_OVERLAP=0.15 of shorter clip; tiers: judged_keep +0.12, discovered -0.10, triaged -0.05, fallback -0.25, judged_reject -0.30.",
+    "pytest basetemp redirected into temp folder via PYTEST_ADDOPTS in env.ps1"
   ],
   "units": [
     {
@@ -31,37 +35,37 @@
     {
       "id": "U1",
       "name": "product identity",
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": "U2",
       "name": "provider layer: nvidia, typesafe, usage, think-strip, multimodal",
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": "U3",
       "name": "registry + AI manager + health + decision records (db v2)",
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": "U4",
       "name": "capability specs + prompts",
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": "U5",
       "name": "intelligence pipeline: discovery/normalize/triage/score/visual/judge",
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": "U6",
       "name": "global selection exactly-N + fallback",
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": "U7",
       "name": "runner integration + job settings snapshot fix",
-      "status": "pending"
+      "status": "in_progress"
     },
     {
       "id": "U8",
@@ -89,20 +93,27 @@
       "status": "pending"
     }
   ],
-  "current_unit": "U1",
+  "current_unit": "U8",
   "files_changed": [],
-  "tests_run": [],
+  "tests_run": [
+    {
+      "date": "2026-09-29",
+      "cmd": "python -m pytest -q",
+      "result": "384 passed, 28 skipped (e2e needs media; live Jev needs key)"
+    }
+  ],
   "known_failures": [],
   "unresolved_decisions": [
     "Kimi K3 / DeepSeek V4.1 Flash image-input support unverified without an NVIDIA key; handled as unsupported_modality fallback.",
     "Live provider tests need user keys; normal tests are mocked."
   ],
-  "next_action": "U1 product identity",
+  "next_action": "API: ai status/decisions endpoints, download-all zip, clip details in ClipOut, SettingsIn.ai; then frontend",
   "cleanup_checklist": [
     "gh auth logout --hostname github.com (token is in Windows Credential Manager, NOT the temp folder)",
     "Remove %LOCALAPPDATA%\\Temp\\hustlclip (tools, caches, venv, clone)",
     "Verify C:\\Users\\Administrator\\.local was removed (uv python shim) - done 2026-09-29",
     "Verify no HustlClip/AutoClip entries left in Windows Credential Manager (keyring service 'autoclip')",
-    "Scratch workspace is app-managed; leave empty"
+    "Scratch workspace is app-managed; leave empty",
+    "Delete the pytest-of-GHOST folder under LOCALAPPDATA Temp if it reappears (it contains symlinks)"
   ]
 }

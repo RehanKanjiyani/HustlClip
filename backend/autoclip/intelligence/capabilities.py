@@ -142,7 +142,9 @@ def _parse_json(text: str) -> dict[str, Any]:
     try:
         return extract_json_object(text)
     except (ValueError, json.JSONDecodeError) as exc:
-        raise CapabilityError(f"Response is not valid JSON: {exc}", ErrorCategory.MALFORMED) from exc
+        raise CapabilityError(
+            f"Response is not valid JSON: {exc}", ErrorCategory.MALFORMED
+        ) from exc
 
 
 # --------------------------------------------------------------------------
@@ -258,12 +260,12 @@ class DiscoverySpec(CapabilitySpec):
             if not isinstance(item, dict):
                 invalid += 1
                 continue
-            try:
-                start = int(item.get("start_word_index"))
-                end = int(item.get("end_word_index"))
-            except (TypeError, ValueError):
+            start_ref = _optional_int(item.get("start_word_index"))
+            end_ref = _optional_int(item.get("end_word_index"))
+            if start_ref is None or end_ref is None:
                 invalid += 1
                 continue
+            start, end = start_ref, end_ref
             # A reference wholly outside the section is hallucinated; a partial
             # overlap is a sloppy edge and is clamped.
             if end < payload.first_word or start > payload.last_word:
@@ -543,18 +545,23 @@ class ScoringSpec(CapabilitySpec):
         for raw in _items(data, "scores", "candidates"):
             if not isinstance(raw, dict):
                 continue
-            item = by_id.get(raw.get("candidate_id"))
+            cid = raw.get("candidate_id")
+            item = by_id.get(cid) if isinstance(cid, str) else None
             if item is None:
                 continue
-            source = raw.get("scores") if isinstance(raw.get("scores"), dict) else raw
+            nested = raw.get("scores")
+            source: dict[str, Any] = nested if isinstance(nested, dict) else raw
             dimensions = {
-                name: value for name in SCORE_DIMENSIONS if (value := _ten(source.get(name))) is not None
+                name: value
+                for name in SCORE_DIMENSIONS
+                if (value := _ten(source.get(name))) is not None
             }
             overall = _unit(raw.get("overall"))
             if overall is None or len(dimensions) < len(SCORE_DIMENSIONS) // 2:
                 continue
-            start, end = _optional_int(raw.get("start_word_index")), _optional_int(
-                raw.get("end_word_index")
+            start, end = (
+                _optional_int(raw.get("start_word_index")),
+                _optional_int(raw.get("end_word_index")),
             )
             if not (
                 start is not None
@@ -709,7 +716,9 @@ class JudgmentSpec(CapabilitySpec):
                 title=_text(raw.get("title"), 80),
                 reason=_text(raw.get("reason"), 300),
                 same_story_as=[
-                    s for s in same if isinstance(s, str) and s in known and s != raw["candidate_id"]
+                    s
+                    for s in same
+                    if isinstance(s, str) and s in known and s != raw["candidate_id"]
                 ]
                 if isinstance(same, list)
                 else [],

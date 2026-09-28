@@ -75,8 +75,8 @@ class ModelEntry:
 
 def default_models(settings: Settings) -> list[ModelEntry]:
     """The built-in registry before user overrides."""
-    decision_llm = {name: 30 for name in caps.DECISION_CAPABILITIES}
-    decision_fast = {name: 40 for name in caps.DECISION_CAPABILITIES}
+    decision_llm = dict.fromkeys(caps.DECISION_CAPABILITIES, 30)
+    decision_fast = dict.fromkeys(caps.DECISION_CAPABILITIES, 40)
 
     entries: list[ModelEntry] = [
         ModelEntry(
@@ -135,7 +135,7 @@ def default_models(settings: Settings) -> list[ModelEntry]:
             provider="typesafe",
             api_model=settings.provider("typesafe").model or "jev-latest",
             display_name="TypeSafe Jev",
-            capabilities={name: 10 for name in caps.DECISION_CAPABILITIES},
+            capabilities=dict.fromkeys(caps.DECISION_CAPABILITIES, 10),
             tier=DECISION,
             timeout_s=30.0,
             # Documented: 32k tokens for state plus the longest question.
@@ -166,7 +166,7 @@ def _configured_provider_entries(settings: Settings) -> list[ModelEntry]:
             caps.TEXT_SCORING: 60,
             caps.FINAL_JUDGMENT: 10 if active else 60,
             caps.DYNAMIC_COMPOSITION: 20 if active else 60,
-            **{c: 80 for c in caps.DECISION_CAPABILITIES},
+            **dict.fromkeys(caps.DECISION_CAPABILITIES, 80),
         }
         modalities = (TEXT, IMAGE) if name in ("anthropic", "openai") else (TEXT,)
         if IMAGE in modalities:

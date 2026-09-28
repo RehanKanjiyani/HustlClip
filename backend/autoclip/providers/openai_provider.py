@@ -59,7 +59,9 @@ class OpenAIProvider(LLMProvider):
 
     def __init__(self, model: str = "", *, api_key: str | None = None, base_url: str | None = None):
         super().__init__(
-            model or self._default_model(), api_key=api_key, base_url=base_url or self.default_base_url
+            model or self._default_model(),
+            api_key=api_key,
+            base_url=base_url or self.default_base_url,
         )
 
     def _default_model(self) -> str:
@@ -89,9 +91,8 @@ class OpenAIProvider(LLMProvider):
         return AsyncOpenAI(**kwargs)
 
     def _is_local(self) -> bool:
-        return bool(self.base_url) and (
-            "localhost" in self.base_url or "127.0.0.1" in self.base_url
-        )
+        url = self.base_url or ""
+        return "localhost" in url or "127.0.0.1" in url
 
     async def _complete(self, system: str, user: str, config: DetectionConfig) -> str:
         completion = await self.generate(
@@ -219,14 +220,18 @@ def _is_unsupported_parameter(exc: Exception) -> bool:
     return "response_format" in lowered or "unsupported" in lowered or "unrecognized" in lowered
 
 
-def _translate(exc: Exception, provider: str, model: str, had_images: bool = False) -> ProviderError:
+def _translate(
+    exc: Exception, provider: str, model: str, had_images: bool = False
+) -> ProviderError:
     """Map SDK exceptions to categorised provider errors."""
     import openai
 
     status = getattr(exc, "status_code", None)
     # APITimeoutError subclasses APIConnectionError, so check it first.
     if isinstance(exc, openai.APITimeoutError):
-        return ProviderError("The endpoint timed out.", provider=provider, category=ErrorCategory.TIMEOUT)
+        return ProviderError(
+            "The endpoint timed out.", provider=provider, category=ErrorCategory.TIMEOUT
+        )
     if isinstance(exc, openai.APIConnectionError):
         return ProviderError(
             "Could not reach the endpoint.",
@@ -238,7 +243,9 @@ def _translate(exc: Exception, provider: str, model: str, had_images: bool = Fal
         lowered = str(exc).lower()
         if "quota" in lowered or "billing" in lowered:
             return ProviderError(
-                "The account has no remaining quota.", provider=provider, category=ErrorCategory.AUTH
+                "The account has no remaining quota.",
+                provider=provider,
+                category=ErrorCategory.AUTH,
             )
         return ProviderError(
             "Rate limit reached.",
