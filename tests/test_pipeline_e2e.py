@@ -73,7 +73,12 @@ class ScriptedManager:
         self.calls = 0
 
     def available(self, capability: str) -> bool:
-        return capability in (caps.CANDIDATE_DISCOVERY, caps.TEXT_SCORING, caps.FINAL_JUDGMENT)
+        return capability in (
+            caps.CANDIDATE_DISCOVERY,
+            caps.TEXT_SCORING,
+            caps.FINAL_JUDGMENT,
+            caps.DYNAMIC_COMPOSITION,
+        )
 
     async def run(self, capability: str, payload):
         self.calls += 1
@@ -99,6 +104,18 @@ class ScriptedManager:
                     item.candidate_id: caps.Verdict(keep=True, score=0.8, title="", reason="kept")
                     for item in payload.finalists
                 }
+            )
+        if capability == caps.DYNAMIC_COMPOSITION:
+            # The last shot shows the whole frame, so the fitted layout is
+            # rendered for real alongside the tracked one.
+            shots = payload.shots
+            return _Result(
+                [
+                    caps.CompositionSegment(
+                        s.start_s, s.end_s, "wide_fit" if i == len(shots) - 1 else "speaker_full"
+                    )
+                    for i, s in enumerate(shots)
+                ]
             )
         raise AssertionError(f"unexpected capability {capability}")
 
@@ -164,6 +181,7 @@ def pipeline_result(autoclip_home):
     settings.clips.max_duration_s = 45.0
     settings.export.caption_style = "bold_pop"
     settings.export.ratio = "9:16"
+    settings.ai.dynamic_composition = True
 
     job = store.create_job(Job(id=new_id(), source_id=source.id, provider="scripted", settings={}))
 
@@ -358,6 +376,28 @@ class TestReframe:
         )
 
 
+class TestDynamicComposition:
+    def test_every_clip_got_a_composed_crop_path(self, pipeline_result) -> None:
+        workspace = pipeline_result["workspace"]
+
+        for clip in pipeline_result["clips"]:
+            assert workspace.composition(clip.id).exists()
+
+    def test_composed_paths_include_the_fitted_layout(self, pipeline_result) -> None:
+        import json
+
+        workspace = pipeline_result["workspace"]
+        fitted = [
+            segment["fit"]
+            for clip in pipeline_result["clips"]
+            for segment in json.loads(workspace.composition(clip.id).read_text(encoding="utf-8"))[
+                "crop_path"
+            ]["segments"]
+        ]
+
+        assert any(fitted)
+
+
 class TestExports:
     def test_one_export_per_clip(self, pipeline_result) -> None:
         for clip in pipeline_result["clips"]:
@@ -399,6 +439,10 @@ class TestResume:
 
         workspace = pipeline_result["workspace"]
         transcript_mtime = workspace.transcript.stat().st_mtime
+        render_mtimes = {
+            clip.id: Path(store.list_exports(clip.id)[0].path).stat().st_mtime
+            for clip in pipeline_result["clips"]
+        }
 
         # Re-running the *same* job is exactly what the retry endpoint does; a
         # new job id would get a fresh workspace and prove nothing.
@@ -419,3 +463,8 @@ class TestResume:
 
         assert workspace.transcript.stat().st_mtime == transcript_mtime
         assert provider.calls == 0, "Highlight detection re-ran despite existing clips."
+        # Finished renders are reused, not encoded a second time.
+        for clip in pipeline_result["clips"]:
+            exports = store.list_exports(clip.id)
+            assert len(exports) == 1
+            assert Path(exports[0].path).stat().st_mtime == render_mtimes[clip.id]

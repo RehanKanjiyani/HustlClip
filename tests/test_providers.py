@@ -1,46 +1,19 @@
 """Provider contract handling.
 
-The retry-with-feedback loop and the tolerant JSON extraction are what keep
-small local models usable, so both are tested against the specific malformed
-shapes models actually emit.
+The tolerant JSON extraction and score coercion are what keep small and
+reasoning models usable, so both are tested against the specific malformed
+shapes models actually emit. (The retry-with-feedback loop now lives in the AI
+manager; see test_ai_manager.py.)
 """
 
 from __future__ import annotations
 
 import pytest
-from autoclip.providers import ClipCandidates, DetectionConfig, TranscriptWindow
 from autoclip.providers.base import (
-    LLMProvider,
     ProviderError,
-    ProviderStatus,
     extract_json_object,
+    strip_reasoning,
 )
-
-VALID = '{"clips":[{"start_word_index":10,"end_word_index":50,"title":"T","score":80}]}'
-
-
-class ScriptedProvider(LLMProvider):
-    """A provider that returns queued responses, for testing the shared loop."""
-
-    name = "scripted"
-    requires_key = False
-
-    def __init__(self, responses: list[str]) -> None:
-        super().__init__("test-model")
-        self.responses = list(responses)
-        self.prompts: list[str] = []
-
-    async def _complete(self, system: str, user: str, config: DetectionConfig) -> str:
-        self.prompts.append(user)
-        return self.responses.pop(0) if self.responses else "{}"
-
-    async def health_check(self) -> ProviderStatus:
-        return ProviderStatus(name=self.name, available=True)
-
-
-@pytest.fixture
-def window() -> TranscriptWindow:
-    return TranscriptWindow(text="[0]hello [1]world", first_word=0, last_word=100)
 
 
 class TestJsonExtraction:
@@ -86,112 +59,107 @@ class TestJsonExtraction:
             extract_json_object("I could not find any clips in this transcript.")
 
 
-class TestCandidateCoercion:
-    def test_fractional_score_is_scaled_to_percent(self) -> None:
-        result = ClipCandidates.model_validate(
-            {"clips": [{"start_word_index": 1, "end_word_index": 2, "score": 0.87}]}
+class TestReasoningIsStripped:
+    """Reasoning models on OpenAI-compatible APIs often think out loud inline."""
+
+    def test_think_block_with_braces_is_ignored(self) -> None:
+        raw = '<think>maybe {"clips": [1]} no...</think>\n{"clips": []}'
+
+        assert extract_json_object(raw) == {"clips": []}
+
+    def test_unclosed_opener_keeps_text_after_the_close(self) -> None:
+        raw = 'let me consider {a} </think> {"scores": []}'
+
+        assert extract_json_object(raw) == {"scores": []}
+
+    def test_plain_answers_are_untouched(self) -> None:
+        assert strip_reasoning('{"a": 1}') == '{"a": 1}'
+
+
+class TestScoreCoercion:
+    """Models emit 0-1, 0-10 and 0-100 scales despite the schema; all normalise.
+
+    (Previously covered by the single-model ClipCandidate model, which the
+    capability parsers replaced.)
+    """
+
+    def _discover(self, candidate: dict) -> list:
+        from autoclip.intelligence import capabilities as caps
+
+        request = caps.DiscoveryRequest(
+            text="",
+            first_word=0,
+            last_word=100,
+            min_duration_s=20,
+            max_duration_s=90,
+            max_candidates=5,
+        )
+        raw = '{"candidates": [' + __import__("json").dumps(candidate) + "]}"
+        return caps.DiscoverySpec().parse_text(raw, request).candidates
+
+    @pytest.mark.parametrize(("given", "expected"), [(0.87, 0.87), (87, 0.87), (8.7, 0.87)])
+    def test_prior_scales_are_normalised(self, given, expected) -> None:
+        found = self._discover(
+            {"start_word_index": 1, "end_word_index": 50, "initial_score": given}
         )
 
-        assert result.clips[0].score == 87
-
-    def test_float_score_is_rounded(self) -> None:
-        result = ClipCandidates.model_validate(
-            {"clips": [{"start_word_index": 1, "end_word_index": 2, "score": 82.6}]}
-        )
-
-        assert result.clips[0].score == 83
+        assert found[0].initial_score == pytest.approx(expected)
 
     def test_out_of_range_score_is_clamped(self) -> None:
-        result = ClipCandidates.model_validate(
-            {"clips": [{"start_word_index": 1, "end_word_index": 2, "score": 250}]}
-        )
+        found = self._discover({"start_word_index": 1, "end_word_index": 50, "score": 250})
 
-        assert result.clips[0].score == 100
-
-    def test_null_text_fields_become_empty_strings(self) -> None:
-        result = ClipCandidates.model_validate(
-            {"clips": [{"start_word_index": 1, "end_word_index": 2, "title": None}]}
-        )
-
-        assert result.clips[0].title == ""
+        assert found[0].initial_score == 1.0
 
     def test_missing_score_defaults_to_the_middle(self) -> None:
-        result = ClipCandidates.model_validate(
-            {"clips": [{"start_word_index": 1, "end_word_index": 2}]}
+        found = self._discover({"start_word_index": 1, "end_word_index": 50})
+
+        assert found[0].initial_score == 0.5
+
+    def test_null_text_fields_become_empty_strings(self) -> None:
+        found = self._discover({"start_word_index": 1, "end_word_index": 50, "title": None})
+
+        assert found[0].title == ""
+
+    def test_zero_length_and_reversed_ranges_are_dropped(self) -> None:
+        from autoclip.intelligence import capabilities as caps
+
+        request = caps.DiscoveryRequest(
+            text="",
+            first_word=0,
+            last_word=100,
+            min_duration_s=20,
+            max_duration_s=90,
+            max_candidates=5,
+        )
+        raw = (
+            '{"candidates": [{"start_word_index": 50, "end_word_index": 50},'
+            '{"start_word_index": 60, "end_word_index": 40},'
+            '{"start_word_index": 10, "end_word_index": 40}]}'
         )
 
-        assert result.clips[0].score == 50
+        found = caps.DiscoverySpec().parse_text(raw, request)
 
-    def test_negative_index_is_rejected(self) -> None:
-        from pydantic import ValidationError
+        assert [(c.start_word_index, c.end_word_index) for c in found.candidates] == [(10, 40)]
+        assert found.invalid_references == 2
 
-        with pytest.raises(ValidationError):
-            ClipCandidates.model_validate(
-                {"clips": [{"start_word_index": -1, "end_word_index": 2}]}
-            )
+    def test_partially_outside_range_is_clamped_into_the_window(self) -> None:
+        found = self._discover({"start_word_index": 90, "end_word_index": 400})
 
+        assert (found[0].start_word_index, found[0].end_word_index) == (90, 100)
 
-class TestDetectionLoop:
-    async def test_valid_response_needs_no_retry(self, window: TranscriptWindow) -> None:
-        provider = ScriptedProvider([VALID])
+    def test_empty_list_is_a_valid_answer(self) -> None:
+        from autoclip.intelligence import capabilities as caps
 
-        result = await provider.detect_highlights(window, DetectionConfig())
-
-        assert len(result.clips) == 1
-        assert len(provider.prompts) == 1
-
-    async def test_malformed_response_triggers_one_retry(self, window: TranscriptWindow) -> None:
-        provider = ScriptedProvider(["this is not json at all", VALID])
-
-        result = await provider.detect_highlights(window, DetectionConfig())
-
-        assert len(result.clips) == 1
-        assert len(provider.prompts) == 2
-
-    async def test_retry_prompt_carries_the_validation_error(
-        self, window: TranscriptWindow
-    ) -> None:
-        provider = ScriptedProvider(["nonsense", VALID])
-
-        await provider.detect_highlights(window, DetectionConfig())
-
-        assert "did not match the required schema" in provider.prompts[1]
-
-    async def test_two_failures_raise_a_provider_error(self, window: TranscriptWindow) -> None:
-        provider = ScriptedProvider(["nope", "still nope"])
-
-        with pytest.raises(ProviderError, match="malformed clip data twice"):
-            await provider.detect_highlights(window, DetectionConfig())
-
-    async def test_indices_are_clamped_into_the_window(self) -> None:
-        window = TranscriptWindow(text="x", first_word=100, last_word=200)
-        provider = ScriptedProvider(['{"clips":[{"start_word_index":0,"end_word_index":9999}]}'])
-
-        result = await provider.detect_highlights(window, DetectionConfig())
-
-        assert result.clips[0].start_word_index == 100
-        assert result.clips[0].end_word_index == 200
-
-    async def test_zero_length_candidates_are_dropped(self, window: TranscriptWindow) -> None:
-        provider = ScriptedProvider(
-            [
-                '{"clips":[{"start_word_index":50,"end_word_index":50},'
-                '{"start_word_index":60,"end_word_index":40}]}'
-            ]
+        request = caps.DiscoveryRequest(
+            text="",
+            first_word=0,
+            last_word=100,
+            min_duration_s=20,
+            max_duration_s=90,
+            max_candidates=5,
         )
 
-        result = await provider.detect_highlights(window, DetectionConfig())
-
-        assert result.clips == []
-
-    async def test_empty_clip_list_is_a_valid_answer(self, window: TranscriptWindow) -> None:
-        # "Nothing here is worth clipping" is a correct response, not a failure.
-        provider = ScriptedProvider(['{"clips":[]}'])
-
-        result = await provider.detect_highlights(window, DetectionConfig())
-
-        assert result.clips == []
-        assert len(provider.prompts) == 1
+        assert caps.DiscoverySpec().parse_text('{"candidates": []}', request).candidates == []
 
 
 class TestRegistry:

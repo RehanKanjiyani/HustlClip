@@ -62,7 +62,7 @@ export function Ingest() {
         sourceId = source.id
       } else {
         setPhase({ kind: 'fetch' })
-        sourceId = (await api.ingestYouTube(url.trim())).id
+        sourceId = (await api.ingestUrl(url.trim())).id
       }
       setPhase({ kind: 'queue' })
       const job = await api.createJob(sourceId, overrides)
@@ -303,7 +303,7 @@ function Options({
               <Check
                 checked={overrides.dynamic_composition ?? false}
                 onChange={(v) => set('dynamic_composition', v || undefined)}
-                label="Dynamic layouts — let AI switch between full-frame, wide and two-person views"
+                label="Dynamic layouts — let AI switch between following the speaker and showing the whole frame"
               />
             </div>
           </div>

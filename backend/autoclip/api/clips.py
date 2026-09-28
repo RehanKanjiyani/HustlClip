@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from pathlib import Path
 
@@ -88,7 +89,14 @@ async def clip_crop_path(clip_id: str) -> dict:
     if clip is None:
         raise HTTPException(status_code=404, detail="Clip not found.")
 
-    cached = JobWorkspace(clip.job_id).crop_path(clip.id)
+    workspace = JobWorkspace(clip.job_id)
+    composed = workspace.composition(clip.id)
+    if composed.exists():
+        # Dynamic composition rewrote the framing; preview what will render.
+        data = await asyncio.to_thread(composed.read_text, encoding="utf-8")
+        return json.loads(data)["crop_path"]
+
+    cached = workspace.crop_path(clip.id)
     if not cached.exists():
         # Audio-only sources and pre-reframe jobs legitimately have none; the
         # client falls back to a centre crop.
@@ -363,6 +371,9 @@ def _crop_path_for(workspace: JobWorkspace, clip, source, ratio: str) -> CropPat
     A re-export at a different ratio can't reuse a path computed for the
     original one, so the geometry is recomputed rather than stretched.
     """
+    composed = workspace.composition(clip.id)
+    if composed.exists() and ratio == "9:16":
+        return CropPath.from_dict(json.loads(composed.read_text(encoding="utf-8"))["crop_path"])
     cached = workspace.crop_path(clip.id)
     if cached.exists() and ratio == "9:16":
         return CropPath.load(cached)

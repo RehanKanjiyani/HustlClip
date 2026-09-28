@@ -28,6 +28,10 @@ log = logging.getLogger(__name__)
 #: Set to "1" to serve the API without starting the background job worker.
 ENV_NO_WORKER = "AUTOCLIP_NO_WORKER"
 
+#: When set, every request must carry this token (see _install_access_gate).
+ENV_ACCESS_TOKEN = "HUSTLCLIP_ACCESS_TOKEN"
+ACCESS_COOKIE = "hustlclip_access"
+
 # Not in every platform's MIME table; browsers want these for the installable
 # phone app (web manifest) and its icon.
 mimetypes.add_type("application/manifest+json", ".webmanifest")
@@ -84,6 +88,10 @@ def create_app() -> FastAPI:
 
     app.include_router(api_router)
 
+    token = os.environ.get(ENV_ACCESS_TOKEN, "").strip()
+    if token:
+        _install_access_gate(app, token)
+
     @app.get("/api/health")
     async def health() -> dict:
         status = queue.status()
@@ -96,6 +104,71 @@ def create_app() -> FastAPI:
 
     _mount_frontend(app)
     return app
+
+
+def _install_access_gate(app: FastAPI, token: str) -> None:
+    """Require a shared secret on every request.
+
+    HustlClip has no accounts: it is meant to be reached from the same machine
+    or a trusted network. When it must be reachable from the internet — the
+    phone-over-tunnel setup in docs/MOBILE.md — this gate is the minimum
+    protection: without the token nobody can use the server (or the API keys
+    behind it).
+
+    The token is accepted once as ``?token=`` (the link you open on the phone),
+    after which an HttpOnly cookie carries it; API clients may send
+    ``Authorization: Bearer <token>``. Only ``/api/health`` stays open, and it
+    reveals nothing but liveness.
+    """
+    import hmac
+
+    from fastapi.responses import RedirectResponse
+
+    def matches(candidate: str | None) -> bool:
+        if not candidate:
+            return False
+        return hmac.compare_digest(candidate.encode(), token.encode())
+
+    @app.middleware("http")
+    async def access_gate(request: Request, call_next):
+        if request.url.path == "/api/health":
+            return await call_next(request)
+
+        query_token = request.query_params.get("token")
+        if matches(query_token):
+            # Trade the token in the URL for a cookie, and drop it from the
+            # address bar so it isn't left in history or shared screenshots.
+            from urllib.parse import urlencode
+
+            params = [(k, v) for k, v in request.query_params.multi_items() if k != "token"]
+            target = request.url.path + ("?" + urlencode(params) if params else "")
+            response = RedirectResponse(target or "/", status_code=303)
+            response.set_cookie(
+                ACCESS_COOKIE,
+                token,
+                httponly=True,
+                samesite="lax",
+                secure=request.url.scheme == "https",
+                max_age=60 * 60 * 24 * 7,
+            )
+            return response
+
+        header = request.headers.get("authorization", "")
+        bearer = header[7:] if header.lower().startswith("bearer ") else None
+        if matches(request.cookies.get(ACCESS_COOKIE)) or matches(bearer):
+            return await call_next(request)
+
+        return JSONResponse(
+            status_code=401,
+            content={
+                "detail": {
+                    "message": "This HustlClip server needs its access link.",
+                    "hint": "Open the full link (with ?token=...) printed when the server started.",
+                }
+            },
+        )
+
+    log.info("Access gate enabled: requests need the access token.")
 
 
 def _mount_frontend(app: FastAPI) -> None:

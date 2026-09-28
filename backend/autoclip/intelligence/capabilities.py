@@ -829,10 +829,10 @@ class DuplicateSpec(CapabilitySpec):
 # --------------------------------------------------------------------------
 
 
+#: Layouts the renderer can execute (see pipeline.composition).
 LAYOUTS: dict[str, str] = {
     "speaker_full": "Full-frame vertical crop following the active speaker",
     "wide_fit": "The whole original frame fitted into the vertical canvas over a blurred fill",
-    "two_speaker_stacked": "Two speakers stacked top and bottom",
 }
 
 
@@ -870,37 +870,52 @@ class CompositionSpec(CapabilitySpec):
         layouts = {k: v for k, v in LAYOUTS.items() if k in payload.allowed_layouts}
         shots = [
             {
-                "start_s": round(s.start_s, 2),
-                "end_s": round(s.end_s, 2),
+                "shot": index,
+                "from_s": round(s.start_s, 1),
+                "to_s": round(s.end_s, 1),
                 "faces": s.faces,
-                "tracker": s.strategy,
+                "framing": s.strategy,
             }
-            for s in payload.shots
+            for index, s in enumerate(payload.shots)
         ]
         return (
-            f"Clip length {payload.duration_s:.2f} s, {payload.speaker_count} speaker(s).\n"
+            f"Clip length {payload.duration_s:.1f} s, {payload.speaker_count} speaker(s).\n"
             f"Allowed layouts: {json.dumps(layouts)}\n"
-            f"Shots (from shot detection and face tracking): {json.dumps(shots)}\n\n"
+            f"Shots, from shot detection and face tracking: {json.dumps(shots)}\n\n"
             f"Transcript:\n{payload.transcript[:2500]}"
         )
 
     def parse_text(self, text: str, payload: CompositionRequest) -> list[CompositionSegment]:
+        """A layout per shot index; timing comes from the measured shots.
+
+        The model references shots, never seconds, so a layout change can only
+        ever land on a real shot boundary.
+        """
         data = _parse_json(text)
-        segments: list[CompositionSegment] = []
-        for raw in _items(data, "segments", "timeline"):
+        chosen: dict[int, str] = {}
+        for raw in _items(data, "shots", "segments"):
             if not isinstance(raw, dict):
                 continue
+            index = _optional_int(raw.get("shot"))
             layout = raw.get("layout")
+            if index is None or not 0 <= index < len(payload.shots):
+                raise CapabilityError(
+                    f"Shot {raw.get('shot')!r} does not exist.", ErrorCategory.INVALID_REFERENCES
+                )
             if layout not in payload.allowed_layouts:
                 raise CapabilityError(f"Layout {layout!r} is not allowed.", ErrorCategory.SCHEMA)
-            try:
-                start, end = float(raw["start"]), float(raw["end"])
-            except (KeyError, TypeError, ValueError) as exc:
-                raise CapabilityError("Segment times are missing.", ErrorCategory.SCHEMA) from exc
-            segments.append(CompositionSegment(start_s=start, end_s=end, layout=layout))
-        if not segments:
-            raise CapabilityError("No composition segments returned.", ErrorCategory.INCOMPLETE)
-        return segments
+            chosen[index] = layout
+        if not chosen:
+            raise CapabilityError("No shot layouts returned.", ErrorCategory.INCOMPLETE)
+        # Unmentioned shots keep the standard layout.
+        return [
+            CompositionSegment(
+                start_s=shot.start_s,
+                end_s=shot.end_s,
+                layout=chosen.get(index, "speaker_full"),
+            )
+            for index, shot in enumerate(payload.shots)
+        ]
 
     def describe(self, payload: CompositionRequest) -> str:
         return f"candidate {payload.candidate_id}"

@@ -113,10 +113,16 @@ exclude = ["frontend/node_modules", "frontend/dist"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# Generated from notebooks/build_notebook.py, which is linted instead.
+extend-exclude = ["notebooks/*.ipynb"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "C4"]
 ignore = ["B008"]  # typer/fastapi use function calls in argument defaults by design
+
+[tool.ruff.lint.per-file-ignores]
+# Notebook cell templates: long URLs and shell lines read better unwrapped.
+"notebooks/build_notebook.py" = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

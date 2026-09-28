@@ -15,8 +15,6 @@ from __future__ import annotations
 from ..config import Settings, get_secret
 from .anthropic_provider import AnthropicProvider
 from .base import (
-    ClipCandidate,
-    ClipCandidates,
     Completion,
     DetectionConfig,
     ErrorCategory,
@@ -36,8 +34,6 @@ __all__ = [
     "DECISION_PROVIDERS",
     "PROVIDERS",
     "AnthropicProvider",
-    "ClipCandidate",
-    "ClipCandidates",
     "Completion",
     "DetectionConfig",
     "ErrorCategory",

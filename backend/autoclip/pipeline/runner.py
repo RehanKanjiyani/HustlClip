@@ -149,6 +149,10 @@ class JobWorkspace:
     def captions_dir(self) -> Path:
         return self.root / "captions"
 
+    def composition(self, clip_id: str) -> Path:
+        """Dynamic-composition timeline plus the crop path it produced."""
+        return self.root / "composition" / f"{clip_id}.json"
+
     @property
     def intel(self) -> Path:
         """Artifacts of the intelligence funnel, one JSON file per step."""
@@ -232,6 +236,8 @@ class PipelineRunner:
             silences = self._load_or_detect_silences(audio)
             clips = await self._stage_highlights(transcript, silences)
             crop_paths = self._stage_reframe(clips, transcript)
+            if self.settings.ai.dynamic_composition:
+                await self._compose(clips, transcript, crop_paths)
             self._stage_captions(clips, transcript)
             self._stage_export(clips, transcript, crop_paths)
         except JobCancelled:
@@ -437,12 +443,16 @@ class PipelineRunner:
             self._finish_stage(stage)
             return crop_paths
 
+        # `hustlclip clip --centre-crop` sets this; it was previously accepted
+        # and silently ignored.
+        centre_only = bool(self.settings.export.__dict__.get("centre_crop", False))
         config = ReframeConfig(
             aspect_w=9 if self.settings.export.ratio == "9:16" else 1,
             aspect_h=16 if self.settings.export.ratio == "9:16" else 1,
+            centre_only=centre_only,
         )
         if self.settings.export.ratio == "16:9":
-            config = ReframeConfig(aspect_w=16, aspect_h=9)
+            config = ReframeConfig(aspect_w=16, aspect_h=9, centre_only=centre_only)
 
         for index, clip in enumerate(clips):
             self._check_cancelled()
@@ -463,6 +473,83 @@ class PipelineRunner:
 
         self._finish_stage(stage)
         return crop_paths
+
+    async def _compose(
+        self, clips: list[Clip], transcript: Transcript, crop_paths: dict[str, CropPath]
+    ) -> None:
+        """Optional dynamic composition, applied on top of the reframe result.
+
+        The original crop path stays in ``crops/``; the composed one is kept
+        with its timeline under ``composition/`` so a retry reuses it and the
+        review player can show exactly what will render. Any failure keeps the
+        standard framing for that clip — composition is never worth a failed job.
+        """
+        from ..intelligence import CapabilityUnavailable
+        from ..intelligence import capabilities as caps
+        from . import composition
+
+        manager = build_manager(self.settings, self.job.id)
+        if not manager.available(caps.DYNAMIC_COMPOSITION):
+            log.info("Dynamic composition requested but no model can serve it; skipping.")
+            return
+
+        for index, clip in enumerate(clips):
+            self._check_cancelled()
+            path = crop_paths.get(clip.id)
+            if path is None or not path.segments:
+                continue
+            marker = self.workspace.composition(clip.id)
+            if marker.exists():
+                crop_paths[clip.id] = CropPath.from_dict(
+                    json.loads(marker.read_text(encoding="utf-8"))["crop_path"]
+                )
+                continue
+
+            request = caps.CompositionRequest(
+                candidate_id=clip.id,
+                duration_s=clip.duration_s,
+                transcript=transcript.text_between(clip.start_word, clip.end_word),
+                speaker_count=len(
+                    {
+                        w.speaker
+                        for w in transcript.slice(clip.start_word, clip.end_word)
+                        if w.speaker
+                    }
+                )
+                or 1,
+                shots=composition.shots_for_prompt(path),
+                allowed_layouts=list(composition.SUPPORTED_LAYOUTS),
+            )
+            # Reframe is already counted as finished; pass overall explicitly
+            # so this message can't push the bar past its true position.
+            self._emit(
+                Stage.REFRAME,
+                1.0,
+                f"Choosing layouts for clip {index + 1}",
+                overall=self._completed_weight,
+            )
+            try:
+                result = await manager.run(caps.DYNAMIC_COMPOSITION, request)
+            except CapabilityUnavailable as exc:
+                log.warning(
+                    "Composition failed for clip %s (%s); keeping standard framing.", clip.id, exc
+                )
+                continue
+
+            edges = [s.start_s for s in path.segments] + [path.duration_s]
+            timeline = composition.normalise_timeline(result.output, path.duration_s, edges)
+            composed = composition.apply(path, timeline)
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(
+                json.dumps(
+                    {
+                        "timeline": [t.__dict__ for t in timeline],
+                        "crop_path": composed.to_dict(),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            crop_paths[clip.id] = composed
 
     def _stage_captions(self, clips: list[Clip], transcript: Transcript) -> None:
         stage = Stage.CAPTIONS
@@ -491,10 +578,24 @@ class PipelineRunner:
         for index, clip in enumerate(clips):
             self._check_cancelled()
 
+            # A retry after a failed render resumes at the clip that failed:
+            # clips already rendered with the same look are not encoded again.
+            if any(
+                e.ratio == ratio
+                and e.style == style.key
+                and Path(e.path).exists()
+                and Path(e.path).stat().st_size > 0
+                for e in store.list_exports(clip.id)
+            ):
+                self._emit(stage, (index + 1) / len(clips), f"Clip {index + 1} already rendered")
+                continue
+
             crop_path = crop_paths.get(clip.id) or self._fallback_crop_path(clip, ratio)
             words = transcript.slice(clip.start_word, clip.end_word)
+            # The rank prefix keeps names unique (two clips can share a title)
+            # and sorts files in the order they were ranked.
             destination = destination_dir / export.output_filename(
-                clip.title or f"clip-{clip.rank}", ratio
+                f"{clip.rank:02d} {clip.title or 'clip'}", ratio
             )
 
             request = export.ExportRequest(

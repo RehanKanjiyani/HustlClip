@@ -405,7 +405,7 @@ def init() -> None:
 
 @app.command()
 def clip(
-    target: str = typer.Argument(..., help="A YouTube URL, or a path to a local media file."),
+    target: str = typer.Argument(..., help="A video link (YouTube and others) or a local file."),
     provider: str = typer.Option("", "--provider", "-p", help="Override the active provider."),
     model: str = typer.Option("", "--whisper-model", help="Override the Whisper model."),
     max_clips: int = typer.Option(0, "--max-clips", "-n", help="Override the clip count."),
@@ -416,6 +416,17 @@ def clip(
     ),
     centre_crop: bool = typer.Option(
         False, "--centre-crop", help="Skip face tracking and centre-crop everything."
+    ),
+    dynamic_layouts: bool = typer.Option(
+        False,
+        "--dynamic-layouts",
+        help="Let AI switch between following the speaker and the whole frame.",
+    ),
+    output_dir: Path | None = typer.Option(
+        None,
+        "--output-dir",
+        "-o",
+        help="Also copy the finished clips here as 01-title.mp4 ... with a manifest.json.",
     ),
 ) -> None:
     """Turn a video into captioned vertical clips."""
@@ -443,11 +454,15 @@ def clip(
         settings.whisper.diarization = True
     if centre_crop:
         settings.export.__dict__["centre_crop"] = True
+    if dynamic_layouts:
+        settings.ai.dynamic_composition = True
 
     # --- ingest ---------------------------------------------------------
     try:
         with console.status("[cyan]Fetching source...", spinner="dots"):
-            if ingest.is_youtube_url(target):
+            if target.startswith(("http://", "https://")):
+                if not ingest.is_supported_url(target):
+                    raise ingest.IngestError("That link can't be used; use a public http(s) link.")
                 source = ingest.ingest_youtube(target, settings.ingest)
             else:
                 source = ingest.ingest_file(Path(target))
@@ -481,9 +496,19 @@ def clip(
         console=console,
     ) as progress:
         task = progress.add_task("Starting", total=1.0)
+        # A notebook cell or a log file is not a terminal: Rich's live bar
+        # prints nothing there, so fall back to one line per change.
+        plain = not console.is_terminal
+        last = {"message": "", "percent": -5}
 
         def on_progress(event: runner.ProgressEvent) -> None:
             progress.update(task, completed=event.overall, description=event.message)
+            if not plain:
+                return
+            percent = int(event.overall * 100)
+            if event.message != last["message"] or percent >= int(last["percent"]) + 5:
+                print(f"[{percent:3d}%] {event.message}", flush=True)
+                last["message"], last["percent"] = event.message, percent
 
         try:
             clips = asyncio.run(
@@ -510,6 +535,56 @@ def clip(
     console.print()
     console.print(table)
     console.print(f"\n[green]Exported to[/green] {paths.exports_dir() / job.id}")
+
+    if output_dir is not None:
+        written = collect_outputs(job.id, output_dir)
+        console.print(f"[green]Copied {len(written)} clips to[/green] {output_dir}")
+
+
+def collect_outputs(job_id: str, output_dir: Path) -> list[Path]:
+    """Copy a job's rendered clips to ``output_dir`` with a manifest.
+
+    Files are named ``01-title.mp4`` in rank order so they sort correctly in a
+    phone's file browser. ``manifest.json`` lists each clip's rank, title,
+    duration, source timestamps and whether it was AI-selected or filler.
+    """
+    import json
+    import shutil
+
+    from .db import store
+    from .pipeline.export import slugify_title
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    manifest: list[dict] = []
+    written: list[Path] = []
+    for clip in store.list_clips(job_id):
+        exports = store.list_exports(clip.id)
+        if not exports or not Path(exports[0].path).exists():
+            continue
+        source = Path(exports[0].path)
+        name = f"{clip.rank:02d}-{slugify_title(clip.title or 'clip')}{source.suffix}"
+        destination = output_dir / name
+        shutil.copy2(source, destination)
+        written.append(destination)
+        manifest.append(
+            {
+                "rank": clip.rank,
+                "file": destination.name,
+                "title": clip.title,
+                "duration_s": round(clip.duration_s, 2),
+                "source_start_s": round(clip.start_s, 2),
+                "source_end_s": round(clip.end_s, 2),
+                "score": clip.score,
+                "moment_type": clip.details.get("moment_type", ""),
+                "quality": clip.details.get("quality", "selected"),
+                "reason": clip.reason,
+            }
+        )
+    (output_dir / "manifest.json").write_text(
+        json.dumps({"job_id": job_id, "clips": manifest}, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return written
 
 
 @app.command()
@@ -662,7 +737,8 @@ def serve(
     if host == "0.0.0.0":  # noqa: S104
         console.print(
             "[yellow]Binding to 0.0.0.0 exposes HustlClip to your whole network.[/yellow] "
-            "There is no authentication — only do this on a network you trust."
+            "Set HUSTLCLIP_ACCESS_TOKEN to require an access link, or only do this on a "
+            "network you trust."
         )
 
     if open_browser and not reload:

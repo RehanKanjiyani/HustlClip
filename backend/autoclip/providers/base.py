@@ -14,8 +14,8 @@ that starts at the wrong moment.
 
 **Validate, then retry with the error.** Small local models produce malformed
 JSON often enough that a single retry carrying the actual validation message
-turns most failures into successes. That loop lives here so every provider
-inherits it.
+turns most failures into successes. That loop lives in the AI manager, so every
+provider and every capability inherits it.
 """
 
 from __future__ import annotations
@@ -29,8 +29,6 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
-
-from pydantic import BaseModel, Field, ValidationError, field_validator
 
 log = logging.getLogger(__name__)
 
@@ -92,41 +90,6 @@ class ProviderError(RuntimeError):
 # --------------------------------------------------------------------------
 
 
-class ClipCandidate(BaseModel):
-    """One proposed clip, as returned by the model."""
-
-    start_word_index: int = Field(ge=0)
-    end_word_index: int = Field(ge=0)
-    title: str = ""
-    hook: str = ""
-    score: int = Field(default=50, ge=0, le=100)
-    reason: str = ""
-
-    @field_validator("title", "hook", "reason", mode="before")
-    @classmethod
-    def _coerce_to_string(cls, value: Any) -> str:
-        # Models occasionally return null or a number where text was asked for.
-        return "" if value is None else str(value)
-
-    @field_validator("score", mode="before")
-    @classmethod
-    def _coerce_score(cls, value: Any) -> int:
-        """Accept floats and 0-1 fractions, which models emit despite the schema."""
-        if value is None:
-            return 50
-        try:
-            number = float(value)
-        except (TypeError, ValueError):
-            return 50
-        if 0.0 < number <= 1.0:
-            number *= 100
-        return max(0, min(100, round(number)))
-
-
-class ClipCandidates(BaseModel):
-    clips: list[ClipCandidate] = Field(default_factory=list)
-
-
 @dataclass
 class TranscriptWindow:
     """A slice of transcript presented to the model.
@@ -152,9 +115,6 @@ class DetectionConfig:
     max_duration_s: float = 90.0
     max_clips: int = 10
     language: str = ""
-    #: Prompt file stem in ``autoclip/prompts/``. Versioned so contributors can
-    #: iterate on prompts without touching code.
-    prompt_version: str = "highlight_v1"
     temperature: float = 0.3
 
 
@@ -258,64 +218,6 @@ class LLMProvider(ABC):
         )
         return Completion(text=text, model=self.model)
 
-    # -- shared behaviour --------------------------------------------------
-
-    async def detect_highlights(
-        self, window: TranscriptWindow, config: DetectionConfig
-    ) -> ClipCandidates:
-        """Ask the model for clip candidates in ``window``, validating the reply.
-
-        One retry is attempted on a schema violation, feeding the validation
-        error back so the model can correct itself.
-        """
-        system = load_prompt(config.prompt_version)
-        user = render_window_prompt(window, config)
-
-        raw = await self._complete(system, user, config)
-        try:
-            return self._parse(raw, window)
-        except (ValidationError, ValueError) as first_error:
-            log.warning("%s returned invalid JSON; retrying with feedback.", self.name)
-            repair = (
-                f"{user}\n\n"
-                "Your previous response did not match the required schema.\n"
-                f"Validation error:\n{first_error}\n\n"
-                "Respond again with ONLY the corrected JSON object. No prose, no "
-                "markdown fences."
-            )
-            raw = await self._complete(system, repair, config)
-            try:
-                return self._parse(raw, window)
-            except (ValidationError, ValueError) as second_error:
-                raise ProviderError(
-                    f"{self.name} returned malformed clip data twice.",
-                    provider=self.name,
-                    category=ErrorCategory.MALFORMED,
-                    hint=(
-                        f"Last validation error: {second_error}\n\n"
-                        "Smaller local models struggle with strict JSON. Try a larger "
-                        "model, or switch to a hosted provider."
-                    ),
-                ) from second_error
-
-    def _parse(self, raw: str, window: TranscriptWindow) -> ClipCandidates:
-        """Validate a raw response and clamp indices into the window."""
-        payload = extract_json_object(raw)
-        candidates = ClipCandidates.model_validate(payload)
-
-        cleaned: list[ClipCandidate] = []
-        for candidate in candidates.clips:
-            start = max(window.first_word, min(candidate.start_word_index, window.last_word))
-            end = max(window.first_word, min(candidate.end_word_index, window.last_word))
-            if end <= start:
-                # A zero-or-negative-length clip is a model slip, not a candidate.
-                continue
-            candidate.start_word_index = start
-            candidate.end_word_index = end
-            cleaned.append(candidate)
-
-        return ClipCandidates(clips=cleaned)
-
 
 # --------------------------------------------------------------------------
 # Prompt handling
@@ -332,27 +234,6 @@ def load_prompt(version: str) -> str:
             hint="Prompt files live in backend/autoclip/prompts/ as versioned .txt files.",
         )
     return path.read_text(encoding="utf-8")
-
-
-def render_window_prompt(window: TranscriptWindow, config: DetectionConfig) -> str:
-    """Build the user message for one transcript window."""
-    speaker_note = ""
-    if window.speakers:
-        speaker_note = (
-            f"\nThis section has {len(window.speakers)} distinct speakers "
-            f"({', '.join(window.speakers)}); speaker labels are shown inline.\n"
-        )
-
-    return (
-        f"Transcript section, words {window.first_word} to {window.last_word}.\n"
-        f"Each word is tagged with its index as [index]word.\n"
-        f"{speaker_note}\n"
-        f"Clip length must be between {config.min_duration_s:.0f} and "
-        f"{config.max_duration_s:.0f} seconds.\n"
-        f"Return at most {config.max_clips} clips.\n\n"
-        f"---\n{window.text}\n---\n\n"
-        "Respond with ONLY a JSON object matching the schema. No prose, no markdown fences."
-    )
 
 
 _JSON_FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)

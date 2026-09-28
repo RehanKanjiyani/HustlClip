@@ -275,6 +275,10 @@ export const api = {
    * Upload with progress. XMLHttpRequest rather than fetch: fetch still has no
    * upload progress, and a multi-gigabyte VOD over phone Wi-Fi needs a real bar.
    */
+  /** Any public video link yt-dlp supports, not only YouTube. */
+  ingestUrl: (url: string) =>
+    request<Source>('/api/sources/url', { method: 'POST', body: JSON.stringify({ url }) }),
+
   uploadSource: (file: File, onProgress?: (fraction: number) => void) =>
     new Promise<Source>((resolve, reject) => {
       const form = new FormData()

@@ -150,7 +150,7 @@ class Funnel:
         pending = [w for w in windows if _window_key(w) not in results]
         failures: list[CapabilityUnavailable] = []
         done = len(windows) - len(pending)
-        semaphore = asyncio.Semaphore(DISCOVERY_CONCURRENCY)
+        semaphore = asyncio.Semaphore(self._discovery_concurrency())
         lock = asyncio.Lock()
 
         async def run_window(window) -> None:
@@ -270,6 +270,12 @@ class Funnel:
 
         report(1.0, "Evaluation complete")
         return list(by_id.values())
+
+    def _discovery_concurrency(self) -> int:
+        """Hosted models take parallel windows; a local model already owns the GPU."""
+        eligible = getattr(self.manager, "eligible", None)
+        first = eligible(caps.CANDIDATE_DISCOVERY)[:1] if eligible else []
+        return 1 if first and first[0].provider == "ollama" else DISCOVERY_CONCURRENCY
 
     def _shortlist_size(self) -> int:
         return max(4 * self.target, 24)
