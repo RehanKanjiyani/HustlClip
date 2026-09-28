@@ -3,11 +3,78 @@
 Notable changes. Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [semantic versioning](https://semver.org/) once 0.1.0 ships.
 
-## Unreleased
+## HustlClip — 2026-09-29
 
-Everything so far. The first tagged release waits on the reframe acceptance bar
-being validated against a fixed golden video set — see
-[the README](README.md#what-has-and-hasnt-been-verified).
+AutoClip becomes HustlClip: exactly N distinct Shorts per video, chosen by a
+multi-model funnel behind a deterministic AI manager, and runnable from a phone
+through a free Kaggle GPU notebook.
+
+### Added
+
+- **AI manager, model registry, capability contracts** (`intelligence/`):
+  capability-based routing, job-scoped health and cooldowns, safe retries,
+  fallback, token budget, decision records (`ai_decisions` table, API).
+- **Providers:** NVIDIA hosted catalogue; TypeSafe Jev (typed decisions); usage
+  reporting and error categories for all adapters.
+- **Funnel:** discovery → normalisation → triage → scoring (with context and
+  validated boundary suggestions) → selective visual analysis → final judgment →
+  duplicate risk, each step cached for resume.
+- **Global selection** with exact count, distinctness, diversity penalties and
+  marked fallback windows.
+- **Optional dynamic composition** (per-shot layouts executed as crop paths).
+- **Links from anywhere yt-dlp supports** (`POST /api/sources/url`), with private
+  and loopback targets refused; **access-token gate** for exposed servers.
+- **Phone-first UI**: create / progress / results screens, download-all zip,
+  installable web app; AI keys and routing in Settings.
+- **Kaggle notebook** and **docs/MOBILE.md**.
+- CLI `--output-dir` (rank-named files + `manifest.json`) and `--dynamic-layouts`.
+
+### Fixed
+
+- Anthropic adapter sent assistant prefill and `temperature`, which current
+  Claude models reject with a 400 — including the previous default model.
+- The SPA route served files outside the frontend bundle for `..` paths.
+- Per-job settings (clip count, caption style, …) were stored but ignored by
+  the job queue.
+- `--centre-crop` was accepted and silently ignored.
+- A retry re-rendered every clip; renders now resume at the one that failed.
+- Clips with equal titles overwrote each other's output file.
+- The UI's secondary text colour was never defined and rendered at full
+  brightness.
+
+### Removed
+
+- The single-model detect-and-rank path (`highlights.detect`,
+  `LLMProvider.detect_highlights`, `highlight_v1.txt`), superseded by the funnel.
+
+### Verification notes
+
+Run on Windows 10, Python 3.11, CPU only, ffmpeg 9.0.2:
+
+- `pytest -m "not slow"`: all pass. Lint (`ruff check`, `ruff format --check`)
+  clean; `mypy` clean on the new modules; frontend typechecks and builds.
+- `pytest -m e2e` on a 200-second public-domain talking-head video (White House
+  weekly address, Wikimedia Commons): full pipeline with real Faster-Whisper,
+  MediaPipe reframing, dynamic composition, libass captions and encoding;
+  exact configured count, distinct clips, correct dimensions/codec/audio,
+  durations matching cuts, resume without re-transcribing, re-asking models or
+  re-rendering.
+- `hustlclip clip <video> -n 10 --dynamic-layouts -o out/` (the notebook's
+  command) against a local OpenAI-compatible stub over real HTTP: 10 clips,
+  1080×1920 H.264 + AAC, zero overlap between clips, captions visible, 5 AI
+  picks + 5 marked fallback windows (the stub proposed only 5 distinct moments).
+
+Not verified on the build machine: live calls to NVIDIA, Anthropic or TypeSafe
+(no keys there — the adapters are tested against their documented contracts with
+mocks; model ids were checked against NVIDIA's public catalogue), image input on
+Kimi K3 / DeepSeek V4.1 Flash (handled as a fallback if unsupported), the
+notebook on Kaggle itself, GPU transcription/encoding, and clip *quality* with
+real models — that needs real videos and real keys.
+
+## Earlier (AutoClip)
+
+The first tagged release waits on the reframe acceptance bar
+being validated against a fixed golden video set.
 
 ### Added
 

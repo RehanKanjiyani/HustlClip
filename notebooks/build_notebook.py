@@ -37,6 +37,7 @@ CLIPS = 10                # how many clips to make
 CAPTION_STYLE = "bold_pop"   # bold_pop | karaoke_fill | clean_lower | boxed
 TRANSCRIPTION = "large-v3"   # large-v3 (best on GPU) | medium | small (fastest)
 DYNAMIC_LAYOUTS = False   # let AI switch between following the speaker and the whole frame
+APP_MODE = False          # True = also open the HustlClip app on your phone (step 7)
 BRANCH = "main"           # which version of HustlClip to use
 """
 
@@ -173,47 +174,49 @@ print("Also in the notebook's Output panel: hustlclip_clips.zip and each MP4.")
 
 APP_INTRO = """## Optional · Use the HustlClip app on your phone instead
 
-Run the cell below to start the HustlClip web app inside this notebook and get a
-private link for your phone (through a free Cloudflare quick tunnel). The link carries
+Set `APP_MODE = True` in step 1, then run the cell below to start the HustlClip web
+app inside this notebook and get a private link for your phone (through a free Cloudflare quick tunnel). The link carries
 a random access token; without it the server refuses every request. Keep the notebook
 open while you use it — when the Kaggle session ends, the app stops.
 """
 
-APP = """# 7 · (Optional) Open the app on your phone
+APP = """# 7 · (Optional) Open the app on your phone — set APP_MODE = True in step 1
 import re, secrets, time
 
-TOKEN = secrets.token_urlsafe(24)
-server = subprocess.Popen(
-    [HUSTLCLIP, "serve", "--host", "127.0.0.1", "--port", "8000", "--no-open"],
-    env=dict(ENV, HUSTLCLIP_ACCESS_TOKEN=TOKEN), cwd=str(CODE),
-    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-)
 
-cloudflared = BASE / "cloudflared"
-if not cloudflared.exists():
-    urllib.request.urlretrieve(
-        "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64",
-        cloudflared,
+def open_app():
+    token = secrets.token_urlsafe(24)
+    subprocess.Popen(
+        [HUSTLCLIP, "serve", "--host", "127.0.0.1", "--port", "8000", "--no-open"],
+        env=dict(ENV, HUSTLCLIP_ACCESS_TOKEN=token), cwd=str(CODE),
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
-    cloudflared.chmod(0o755)
+    cloudflared = BASE / "cloudflared"
+    if not cloudflared.exists():
+        urllib.request.urlretrieve(
+            "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64",
+            cloudflared,
+        )
+        cloudflared.chmod(0o755)
+    tunnel = subprocess.Popen(
+        [str(cloudflared), "tunnel", "--no-autoupdate", "--url", "http://127.0.0.1:8000"],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+    )
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        match = re.search(r"https://[a-z0-9-]+\\.trycloudflare\\.com", tunnel.stdout.readline())
+        if match:
+            link = f"{match.group(0)}/?token={token}"
+            display(HTML(f'<p>Open this on your phone (keep it private):</p>'
+                         f'<p><a href="{link}" target="_blank">{match.group(0)}/?token=…</a></p>'))
+            return
+    print("The tunnel did not start. Run this cell again.")
 
-tunnel = subprocess.Popen(
-    [str(cloudflared), "tunnel", "--no-autoupdate", "--url", "http://127.0.0.1:8000"],
-    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-)
-public = None
-deadline = time.time() + 60
-while time.time() < deadline and public is None:
-    line = tunnel.stdout.readline()
-    match = re.search(r"https://[a-z0-9-]+\\.trycloudflare\\.com", line)
-    if match:
-        public = match.group(0)
 
-if public:
-    display(HTML(f'<p>Open this on your phone (keep it private):</p>'
-                 f'<p><a href="{public}/?token={TOKEN}" target="_blank">{public}/?token=…</a></p>'))
+if APP_MODE:
+    open_app()
 else:
-    print("The tunnel did not start. Run the cell again.")
+    print("App mode is off (APP_MODE = False in step 1). Your clips are in step 6.")
 """
 
 
