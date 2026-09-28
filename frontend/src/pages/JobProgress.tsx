@@ -7,12 +7,14 @@ import { useJobStream } from '../useJobStream'
 
 /** Stage order and labels, mirroring autoclip.pipeline.Stage. */
 const STAGES = [
-  { key: 'prepare', label: 'Prepare', note: 'Extracting audio and thumbnails' },
-  { key: 'transcribe', label: 'Transcribe', note: 'Word-level timing' },
-  { key: 'highlights', label: 'Highlights', note: 'Choosing the moments worth cutting' },
-  { key: 'reframe', label: 'Reframe', note: 'Tracking the speaker into vertical' },
-  { key: 'captions', label: 'Captions', note: 'Building subtitle timing' },
-  { key: 'export', label: 'Export', note: 'Rendering clips' },
+  { key: 'prepare', label: 'Preparing', note: 'Extracting audio' },
+  { key: 'transcribe', label: 'Transcribing', note: 'Word-level timing' },
+  { key: 'highlights', label: 'Finding moments', note: 'Scanning the whole video' },
+  { key: 'evaluate', label: 'Evaluating moments', note: 'Hook, context, payoff' },
+  { key: 'select', label: 'Selecting the best', note: 'Distinct, strongest clips' },
+  { key: 'reframe', label: 'Reframing', note: 'Following the speaker into vertical' },
+  { key: 'captions', label: 'Adding captions', note: 'Word-timed subtitles' },
+  { key: 'export', label: 'Rendering', note: 'Encoding finished clips' },
 ] as const
 
 export function JobProgress() {
@@ -25,7 +27,7 @@ export function JobProgress() {
   useEffect(() => {
     if (job?.status === 'done') {
       // A short hold so the completed state is legible rather than a flash.
-      const timer = setTimeout(() => navigate(`/jobs/${job.id}/clips`), 900)
+      const timer = setTimeout(() => navigate(`/jobs/${job.id}/results`), 900)
       return () => clearTimeout(timer)
     }
   }, [job?.status, job?.id, navigate])
@@ -60,23 +62,22 @@ export function JobProgress() {
   }
 
   return (
-    <div className="pt-14">
+    <div className="mx-auto max-w-3xl pt-10 sm:pt-14">
       <div className="rise flex flex-wrap items-baseline justify-between gap-6 border-b border-ink-800 pb-6">
         <div className="min-w-0">
           <p className="eyebrow">{job.status}</p>
-          <h1 className="mt-2 max-w-3xl truncate font-display text-[clamp(1.75rem,4vw,3rem)] leading-tight text-ink-100">
+          <h1 className="mt-2 max-w-full truncate font-display text-[clamp(1.75rem,4vw,3rem)] leading-tight text-ink-100">
             {job.source?.title || 'Untitled'}
           </h1>
           {job.source && (
             <p className="numeric mt-2 text-xs text-ink-500">
               {formatDuration(job.source.duration_s)}
-              {job.source.width ? ` · ${job.source.width}×${job.source.height}` : ''} ·{' '}
-              {job.provider}
+              {job.source.width ? ` · ${job.source.width}×${job.source.height}` : ''}
             </p>
           )}
         </div>
 
-        <div className="flex items-baseline gap-8">
+        <div className="flex w-full items-baseline justify-between gap-8 sm:w-auto">
           <span className="numeric font-display text-[clamp(2.5rem,6vw,4rem)] leading-none text-sodium-500">
             {percent}
             <span className="text-2xl text-ink-600">%</span>
@@ -92,8 +93,8 @@ export function JobProgress() {
             </button>
           )}
           {job.status === 'done' && (
-            <button onClick={() => navigate(`/jobs/${job.id}/clips`)} className="btn btn-primary">
-              Review clips
+            <button onClick={() => navigate(`/jobs/${job.id}/results`)} className="btn btn-primary">
+              See clips
             </button>
           )}
         </div>

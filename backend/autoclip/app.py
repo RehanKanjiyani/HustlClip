@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import mimetypes
 import os
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -26,6 +27,11 @@ log = logging.getLogger(__name__)
 
 #: Set to "1" to serve the API without starting the background job worker.
 ENV_NO_WORKER = "AUTOCLIP_NO_WORKER"
+
+# Not in every platform's MIME table; browsers want these for the installable
+# phone app (web manifest) and its icon.
+mimetypes.add_type("application/manifest+json", ".webmanifest")
+mimetypes.add_type("image/svg+xml", ".svg")
 
 #: Where the built frontend is looked for, in priority order. The first is the
 #: packaged location (inside the wheel); the second is the dev build output.

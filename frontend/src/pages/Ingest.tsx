@@ -1,202 +1,238 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useRef, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 
 import {
   ApiError,
   api,
+  formatBytes,
   formatDuration,
+  type CaptionStyle,
   type Job,
   type JobSettingsOverrides,
-  type ProviderStatus,
 } from '../api'
 import { ErrorNote } from '../components/ErrorNote'
 
+type Phase = { kind: 'idle' } | { kind: 'upload'; fraction: number } | { kind: 'fetch' } | { kind: 'queue' }
+
+/**
+ * The primary flow: pick a video (or paste a link), tap one button.
+ *
+ * Everything else — clip count, length, captions, composition — lives behind
+ * "Options", and AI routing lives in Settings. A first-time user on a phone
+ * should see exactly two inputs and one action.
+ */
 export function Ingest() {
   const navigate = useNavigate()
+  const [file, setFile] = useState<File | null>(null)
   const [url, setUrl] = useState('')
-  const [busy, setBusy] = useState<'url' | 'file' | null>(null)
-  const [error, setError] = useState<ApiError | Error | null>(null)
+  const [phase, setPhase] = useState<Phase>({ kind: 'idle' })
+  const [error, setError] = useState<Error | null>(null)
   const [jobs, setJobs] = useState<Job[]>([])
-  const [providers, setProviders] = useState<ProviderStatus[]>([])
+  const [defaultCount, setDefaultCount] = useState(10)
+  const [aiReady, setAiReady] = useState<boolean | null>(null)
+  const [styles, setStyles] = useState<CaptionStyle[]>([])
   const [overrides, setOverrides] = useState<JobSettingsOverrides>({})
-  const [advancedOpen, setAdvancedOpen] = useState(false)
-  const [dragging, setDragging] = useState(false)
+  const [optionsOpen, setOptionsOpen] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     api.listJobs(8).then(setJobs).catch(() => undefined)
-    api.providerStatus().then(setProviders).catch(() => undefined)
+    api.getSettings().then((s) => setDefaultCount(s.clips.max_clips)).catch(() => undefined)
+    api
+      .aiStatus()
+      .then((status) => setAiReady((status.routes.candidate_discovery ?? []).length > 0))
+      .catch(() => setAiReady(null))
+    api.captionStyles().then(setStyles).catch(() => undefined)
   }, [])
 
-  const start = useCallback(
-    async (kind: 'url' | 'file', run: () => Promise<{ id: string }>) => {
-      setBusy(kind)
-      setError(null)
-      try {
-        const source = await run()
-        const job = await api.createJob(source.id, overrides)
-        navigate(`/jobs/${job.id}`)
-      } catch (err) {
-        setError(err as Error)
-      } finally {
-        setBusy(null)
-      }
-    },
-    [navigate, overrides],
-  )
+  const count = overrides.max_clips ?? defaultCount
+  const busy = phase.kind !== 'idle'
+  const ready = (file !== null || url.trim() !== '') && !busy
 
-  const submitUrl = (event: React.FormEvent) => {
-    event.preventDefault()
-    if (!url.trim()) return
-    void start('url', () => api.ingestYouTube(url.trim()))
+  const create = async () => {
+    if (!ready) return
+    setError(null)
+    try {
+      let sourceId: string
+      if (file) {
+        setPhase({ kind: 'upload', fraction: 0 })
+        const source = await api.uploadSource(file, (fraction) =>
+          setPhase({ kind: 'upload', fraction }),
+        )
+        sourceId = source.id
+      } else {
+        setPhase({ kind: 'fetch' })
+        sourceId = (await api.ingestYouTube(url.trim())).id
+      }
+      setPhase({ kind: 'queue' })
+      const job = await api.createJob(sourceId, overrides)
+      navigate(`/jobs/${job.id}`)
+    } catch (err) {
+      setError(err as Error)
+      setPhase({ kind: 'idle' })
+    }
   }
 
-  const submitFile = (file: File) => void start('file', () => api.uploadSource(file))
-
-  const usableProvider = providers.find((p) => p.available)
+  const pickFile = (picked: File | undefined) => {
+    if (!picked) return
+    setFile(picked)
+    setUrl('')
+  }
 
   return (
-    <div className="pt-14">
-      {/* Masthead. Left-aligned and asymmetric — the field is the subject, not
-          a centred hero card. */}
-      <div className="rise max-w-3xl">
-        <p className="eyebrow">Local · No accounts · No watermarks</p>
-        <h1 className="mt-5 font-display text-[clamp(2.75rem,7vw,5.5rem)] leading-[0.95] text-ink-100">
-          Long video in.
-          <br />
-          <span className="italic text-sodium-500">Shorts</span> out.
+    <div className="mx-auto max-w-xl pt-10 sm:pt-16">
+      <div className="rise">
+        <h1 className="font-display text-[clamp(2.4rem,9vw,4.25rem)] leading-[0.98] text-ink-100">
+          Turn your VOD into <span className="italic text-sodium-500">{count}</span> Shorts.
         </h1>
+        <p className="mt-4 text-[0.9375rem] leading-relaxed text-ink-400">
+          Upload a long video. HustlClip finds the strongest moments, reframes them to
+          vertical, adds captions, and hands you finished clips.
+        </p>
       </div>
 
-      <div className="mt-16 grid gap-x-16 gap-y-12 lg:grid-cols-[1.35fr_1fr]">
-        {/* URL */}
-        <section className="rise" style={{ animationDelay: '90ms' }}>
-          <form onSubmit={submitUrl}>
-            <label htmlFor="url" className="eyebrow">
-              Paste a link
-            </label>
-            <div className="mt-3 flex items-end gap-4">
-              <input
-                id="url"
-                className="field font-display text-xl md:text-2xl"
-                placeholder="https://youtube.com/watch?v=…"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                autoComplete="off"
-                spellCheck={false}
-                disabled={busy !== null}
-              />
-              <button
-                type="submit"
-                className="btn btn-primary shrink-0"
-                disabled={busy !== null || !url.trim()}
-              >
-                {busy === 'url' ? 'Fetching…' : 'Start'}
-              </button>
-            </div>
-          </form>
+      {aiReady === false && (
+        <p className="rise mt-8 border-l-2 border-sodium-600 pl-4 text-sm leading-relaxed text-ink-300">
+          Add an AI key first — an NVIDIA key is free.{' '}
+          <Link to="/settings" className="text-sodium-500 underline underline-offset-4">
+            Open Settings
+          </Link>
+        </p>
+      )}
 
-          <p className="mt-3 text-xs leading-relaxed text-ink-500">
-            Only download video you own or have the rights to process.
-          </p>
+      <section className="rise mt-10 space-y-6" style={{ animationDelay: '80ms' }}>
+        {/* File — on a phone this opens the gallery / files picker. */}
+        <button
+          type="button"
+          onClick={() => fileInput.current?.click()}
+          disabled={busy}
+          className={[
+            'flex min-h-32 w-full flex-col items-center justify-center gap-1.5 border border-dashed px-5 py-6 text-center transition-colors duration-200',
+            file ? 'border-sodium-600 bg-sodium-700/10' : 'border-ink-700 hover:border-ink-600',
+          ].join(' ')}
+        >
+          {file ? (
+            <>
+              <span className="max-w-full truncate text-[0.9375rem] text-ink-100">{file.name}</span>
+              <span className="numeric text-xs text-ink-400">
+                {formatBytes(file.size)} · tap to change
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="font-display text-2xl text-ink-200">Upload video</span>
+              <span className="text-xs text-ink-500">mp4 · mov · mkv · webm · audio works too</span>
+            </>
+          )}
+        </button>
+        <input
+          ref={fileInput}
+          type="file"
+          className="hidden"
+          accept="video/*,audio/*"
+          onChange={(e) => {
+            pickFile(e.target.files?.[0])
+            e.target.value = ''
+          }}
+        />
 
-          <AdvancedOptions
-            open={advancedOpen}
-            onToggle={() => setAdvancedOpen((v) => !v)}
-            overrides={overrides}
-            onChange={setOverrides}
-            providers={providers}
-          />
-        </section>
+        <div className="flex items-center gap-4 text-xs text-ink-600" aria-hidden>
+          <span className="h-px flex-1 bg-ink-800" />
+          or
+          <span className="h-px flex-1 bg-ink-800" />
+        </div>
 
-        {/* Upload */}
-        <section className="rise" style={{ animationDelay: '160ms' }}>
-          <p className="eyebrow">Or drop a file</p>
-          <div
-            onDragOver={(e) => {
-              e.preventDefault()
-              setDragging(true)
-            }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={(e) => {
-              e.preventDefault()
-              setDragging(false)
-              const file = e.dataTransfer.files[0]
-              if (file) submitFile(file)
-            }}
-            className={[
-              'mt-3 flex min-h-52 cursor-pointer flex-col items-center justify-center gap-2 border border-dashed px-6 text-center transition-colors duration-200',
-              dragging
-                ? 'border-sodium-500 bg-sodium-700/10'
-                : 'border-ink-700 hover:border-ink-600',
-            ].join(' ')}
-            onClick={() => fileInput.current?.click()}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') fileInput.current?.click()
-            }}
-          >
-            <span className="font-display text-2xl text-ink-200">
-              {busy === 'file' ? 'Uploading…' : 'Drop video or audio'}
-            </span>
-            <span className="text-xs text-ink-500">mp4 · mov · mkv · webm · mp3 · wav · m4a</span>
-          </div>
+        <label className="block">
+          <span className="eyebrow">Paste a video link</span>
           <input
-            ref={fileInput}
-            type="file"
-            className="hidden"
-            accept="video/*,audio/*"
+            className="field mt-1 text-base"
+            inputMode="url"
+            placeholder="https://…"
+            value={url}
             onChange={(e) => {
-              const file = e.target.files?.[0]
-              if (file) submitFile(file)
-              e.target.value = ''
+              setUrl(e.target.value)
+              if (e.target.value) setFile(null)
             }}
+            autoComplete="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            disabled={busy}
           />
-        </section>
-      </div>
+        </label>
+
+        <button
+          type="button"
+          onClick={create}
+          disabled={!ready}
+          className="btn btn-primary relative w-full overflow-hidden py-4 text-base"
+        >
+          {phase.kind === 'upload' && (
+            <span
+              className="absolute inset-y-0 left-0 bg-sodium-400/40 transition-[width] duration-300"
+              style={{ width: `${Math.round(phase.fraction * 100)}%` }}
+              aria-hidden
+            />
+          )}
+          <span className="relative">
+            {phase.kind === 'upload'
+              ? `Uploading… ${Math.round(phase.fraction * 100)}%`
+              : phase.kind === 'fetch'
+                ? 'Fetching video…'
+                : phase.kind === 'queue'
+                  ? 'Starting…'
+                  : `Create ${count} Clips`}
+          </span>
+        </button>
+
+        <p className="text-xs leading-relaxed text-ink-500">
+          Only use video you own or have permission to clip.
+        </p>
+      </section>
 
       {error && (
-        <div className="mt-10 max-w-3xl">
+        <div className="mt-8">
           <ErrorNote error={error} onDismiss={() => setError(null)} />
+          {error instanceof ApiError && error.status === 0 && (
+            <p className="mt-2 text-xs text-ink-500">Your file is still selected — tap Create to retry.</p>
+          )}
         </div>
       )}
 
-      {providers.length > 0 && !usableProvider && (
-        <p className="mt-10 max-w-3xl border-l-2 border-sodium-600 pl-4 text-sm text-ink-300">
-          No AI provider is reachable yet, so clip selection will fail. Add an API key or
-          start Ollama in{' '}
-          <a href="/settings" className="text-sodium-500 underline underline-offset-4">
-            Settings
-          </a>
-          .
-        </p>
-      )}
+      <Options
+        open={optionsOpen}
+        onToggle={() => setOptionsOpen((v) => !v)}
+        overrides={overrides}
+        onChange={setOverrides}
+        defaultCount={defaultCount}
+        styles={styles}
+      />
 
       <RecentJobs jobs={jobs} />
     </div>
   )
 }
 
-function AdvancedOptions({
+function Options({
   open,
   onToggle,
   overrides,
   onChange,
-  providers,
+  defaultCount,
+  styles,
 }: {
   open: boolean
   onToggle: () => void
   overrides: JobSettingsOverrides
   onChange: (next: JobSettingsOverrides) => void
-  providers: ProviderStatus[]
+  defaultCount: number
+  styles: CaptionStyle[]
 }) {
   const set = <K extends keyof JobSettingsOverrides>(key: K, value: JobSettingsOverrides[K]) =>
     onChange({ ...overrides, [key]: value })
 
   return (
-    <div className="mt-8">
-      <button type="button" onClick={onToggle} className="btn btn-quiet -ml-1">
+    <div className="mt-10">
+      <button type="button" onClick={onToggle} className="btn btn-quiet -ml-1 py-2">
         <span
           className="inline-block transition-transform duration-300"
           style={{ transform: open ? 'rotate(90deg)' : 'none' }}
@@ -207,79 +243,95 @@ function AdvancedOptions({
         {open ? 'Hide options' : 'Options'}
       </button>
 
-      {/* grid-template-rows rather than height, so the reveal animates without
-          touching layout properties. */}
       <div
         className="grid transition-[grid-template-rows] duration-400 ease-[cubic-bezier(0.16,1,0.3,1)]"
         style={{ gridTemplateRows: open ? '1fr' : '0fr' }}
       >
         <div className="overflow-hidden">
-          <div className="grid gap-x-8 gap-y-5 pt-5 sm:grid-cols-2">
-            <Selector
-              label="Provider"
-              value={overrides.provider ?? ''}
-              onChange={(v) => set('provider', v || undefined)}
-              options={[
-                { value: '', label: 'Use default' },
-                ...providers.map((p) => ({
-                  value: p.name,
-                  label: p.available ? p.name : `${p.name} — unavailable`,
-                  disabled: !p.available,
-                })),
-              ]}
-            />
-            <Selector
-              label="Whisper model"
-              value={overrides.whisper_model ?? ''}
-              onChange={(v) => set('whisper_model', v || undefined)}
-              options={[
-                { value: '', label: 'Use default' },
-                { value: 'tiny', label: 'tiny — fastest, roughest' },
-                { value: 'base', label: 'base' },
-                { value: 'small', label: 'small — balanced' },
-                { value: 'medium', label: 'medium' },
-                { value: 'large-v3', label: 'large-v3 — slowest, best' },
-              ]}
-            />
+          <div className="grid gap-x-8 gap-y-6 pt-5 sm:grid-cols-2">
             <NumberField
-              label="Max clips"
+              label="Number of clips"
               value={overrides.max_clips}
-              placeholder="10"
+              placeholder={String(defaultCount)}
               min={1}
               max={50}
               onChange={(v) => set('max_clips', v)}
             />
-            <div className="grid grid-cols-2 gap-4">
-              <NumberField
-                label="Min length (s)"
-                value={overrides.min_duration_s}
-                placeholder="20"
-                min={5}
-                max={300}
-                onChange={(v) => set('min_duration_s', v)}
+            <Selector
+              label="Caption style"
+              value={overrides.caption_style ?? ''}
+              onChange={(v) => set('caption_style', v || undefined)}
+              options={[
+                { value: '', label: 'Default' },
+                ...styles.map((s) => ({ value: s.key, label: s.label })),
+              ]}
+            />
+            <NumberField
+              label="Shortest clip (s)"
+              value={overrides.min_duration_s}
+              placeholder="20"
+              min={5}
+              max={300}
+              onChange={(v) => set('min_duration_s', v)}
+            />
+            <NumberField
+              label="Longest clip (s)"
+              value={overrides.max_duration_s}
+              placeholder="90"
+              min={5}
+              max={300}
+              onChange={(v) => set('max_duration_s', v)}
+            />
+            <Selector
+              label="Transcription accuracy"
+              value={overrides.whisper_model ?? ''}
+              onChange={(v) => set('whisper_model', v || undefined)}
+              options={[
+                { value: '', label: 'Default' },
+                { value: 'base', label: 'Fast' },
+                { value: 'small', label: 'Balanced' },
+                { value: 'medium', label: 'Accurate' },
+                { value: 'large-v3', label: 'Most accurate (slow)' },
+              ]}
+            />
+            <div className="space-y-4 sm:col-span-2">
+              <Check
+                checked={overrides.diarization ?? false}
+                onChange={(v) => set('diarization', v || undefined)}
+                label="Several people talking — follow whoever speaks"
               />
-              <NumberField
-                label="Max length (s)"
-                value={overrides.max_duration_s}
-                placeholder="90"
-                min={5}
-                max={300}
-                onChange={(v) => set('max_duration_s', v)}
+              <Check
+                checked={overrides.dynamic_composition ?? false}
+                onChange={(v) => set('dynamic_composition', v || undefined)}
+                label="Dynamic layouts — let AI switch between full-frame, wide and two-person views"
               />
             </div>
-            <label className="flex items-center gap-3 text-sm text-ink-200 sm:col-span-2">
-              <input
-                type="checkbox"
-                checked={overrides.diarization ?? false}
-                onChange={(e) => set('diarization', e.target.checked || undefined)}
-                className="size-4 accent-sodium-500"
-              />
-              Multiple speakers — label who is talking, and cut to them
-            </label>
           </div>
         </div>
       </div>
     </div>
+  )
+}
+
+function Check({
+  checked,
+  onChange,
+  label,
+}: {
+  checked: boolean
+  onChange: (value: boolean) => void
+  label: string
+}) {
+  return (
+    <label className="flex items-start gap-3 py-1 text-sm leading-snug text-ink-200">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="mt-0.5 size-5 shrink-0 accent-sodium-500"
+      />
+      {label}
+    </label>
   )
 }
 
@@ -292,7 +344,7 @@ function Selector({
   label: string
   value: string
   onChange: (value: string) => void
-  options: { value: string; label: string; disabled?: boolean }[]
+  options: { value: string; label: string }[]
 }) {
   return (
     <label className="block">
@@ -300,15 +352,10 @@ function Selector({
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="field mt-1 cursor-pointer text-sm"
+        className="field mt-1 cursor-pointer text-base sm:text-sm"
       >
         {options.map((option) => (
-          <option
-            key={option.value}
-            value={option.value}
-            disabled={option.disabled}
-            className="bg-ink-850"
-          >
+          <option key={option.value} value={option.value} className="bg-ink-850">
             {option.label}
           </option>
         ))}
@@ -337,7 +384,8 @@ function NumberField({
       <span className="eyebrow">{label}</span>
       <input
         type="number"
-        className="field numeric mt-1 text-sm"
+        inputMode="numeric"
+        className="field numeric mt-1 text-base sm:text-sm"
         placeholder={placeholder}
         value={value ?? ''}
         min={min}
@@ -352,28 +400,28 @@ function RecentJobs({ jobs }: { jobs: Job[] }) {
   if (jobs.length === 0) return null
 
   return (
-    <section className="rise mt-24" style={{ animationDelay: '240ms' }}>
+    <section className="rise mt-16" style={{ animationDelay: '160ms' }}>
       <div className="flex items-baseline justify-between border-b border-ink-800 pb-3">
         <h2 className="eyebrow">Recent</h2>
-        <span className="numeric text-xs text-ink-600">{jobs.length}</span>
       </div>
 
       <ul>
         {jobs.map((job) => (
           <li key={job.id}>
-            <a
-              href={job.status === 'done' ? `/jobs/${job.id}/clips` : `/jobs/${job.id}`}
-              className="group grid grid-cols-[1fr_auto] items-baseline gap-4 border-b border-ink-850 py-4 transition-colors duration-200 hover:bg-ink-850/40 sm:grid-cols-[1fr_7rem_6rem_5rem]"
+            <Link
+              to={job.status === 'done' ? `/jobs/${job.id}/results` : `/jobs/${job.id}`}
+              className="group grid grid-cols-[1fr_auto] items-baseline gap-4 border-b border-ink-850 py-4 transition-colors duration-200 hover:bg-ink-850/40"
             >
-              <span className="truncate text-[0.9375rem] text-ink-200 group-hover:text-ink-100">
-                {job.source?.title || 'Untitled'}
+              <span className="min-w-0">
+                <span className="block truncate text-[0.9375rem] text-ink-200 group-hover:text-ink-100">
+                  {job.source?.title || 'Untitled'}
+                </span>
+                <span className="numeric mt-0.5 block text-xs text-ink-500">
+                  {job.source ? formatDuration(job.source.duration_s) : '—'}
+                </span>
               </span>
-              <span className="numeric hidden text-xs text-ink-500 sm:block">
-                {job.source ? formatDuration(job.source.duration_s) : '—'}
-              </span>
-              <span className="hidden text-xs text-ink-500 sm:block">{job.provider}</span>
               <StatusTag job={job} />
-            </a>
+            </Link>
           </li>
         ))}
       </ul>
@@ -389,8 +437,7 @@ function StatusTag({ job }: { job: Job }) {
     queued: 'text-ink-400',
     cancelled: 'text-ink-500',
   }
-  const label =
-    job.status === 'running' ? `${Math.round(job.progress * 100)}%` : job.status
+  const label = job.status === 'running' ? `${Math.round(job.progress * 100)}%` : job.status
 
   return (
     <span className={`numeric justify-self-end text-xs ${tone[job.status] ?? 'text-ink-400'}`}>

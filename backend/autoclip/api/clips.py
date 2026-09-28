@@ -250,6 +250,57 @@ async def download_export(export_id: str) -> FileResponse:
     return FileResponse(path, media_type="video/mp4", filename=path.name)
 
 
+@router.get("/jobs/{job_id}/download-all")
+async def download_all(job_id: str) -> FileResponse:
+    """Every rendered clip of a job in one zip — one tap on a phone.
+
+    Stored, not deflated: MP4 is already compressed, so deflating only costs
+    time. The zip is rebuilt whenever an export is newer than it.
+    """
+    job = await asyncio.to_thread(store.get_job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+
+    archive = await asyncio.to_thread(_build_archive, job_id)
+    if archive is None:
+        raise HTTPException(status_code=404, detail="No rendered clips to download yet.")
+    return FileResponse(archive, media_type="application/zip", filename=archive.name)
+
+
+def _build_archive(job_id: str) -> Path | None:
+    import re
+    import zipfile
+
+    from .. import product
+
+    entries: list[tuple[str, Path]] = []
+    for clip in store.list_clips(job_id):
+        exports = store.list_exports(clip.id)
+        if not exports:
+            continue
+        path = Path(exports[0].path)
+        if not path.exists():
+            continue
+        title = re.sub(r"[^\w\- ]+", "", clip.title or "clip").strip()[:60] or "clip"
+        entries.append((f"{clip.rank:02d} - {title}{path.suffix}", path))
+    if not entries:
+        return None
+
+    folder = paths.exports_dir() / job_id
+    folder.mkdir(parents=True, exist_ok=True)
+    archive = folder / f"{product.SLUG}-{job_id}.zip"
+    newest = max(p.stat().st_mtime for _, p in entries)
+    if archive.exists() and archive.stat().st_mtime >= newest:
+        return archive
+
+    partial = archive.with_suffix(".zip.part")
+    with zipfile.ZipFile(partial, "w", compression=zipfile.ZIP_STORED) as bundle:
+        for name, path in entries:
+            bundle.write(path, arcname=name)
+    partial.replace(archive)
+    return archive
+
+
 @router.get("/jobs/{job_id}/media")
 async def job_media(job_id: str) -> FileResponse:
     """Serve the source video, so the review player can scrub the original.

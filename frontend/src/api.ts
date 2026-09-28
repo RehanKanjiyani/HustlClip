@@ -1,5 +1,5 @@
 /**
- * Typed client for the AutoClip API.
+ * Typed client for the HustlClip API.
  *
  * Same-origin throughout: the server hands out the built bundle, so there is no
  * base URL to configure and no CORS to negotiate.
@@ -68,6 +68,10 @@ export interface Clip {
   caption_style: string
   ratio: string
   exports: ExportRecord[]
+  moment_type: string
+  topic: string
+  /** "selected" for AI-chosen clips, "fallback" when code filled the set. */
+  quality: 'selected' | 'fallback'
 }
 
 export interface Word {
@@ -149,6 +153,37 @@ export interface Settings {
   }
   insecure_secret_storage: boolean
   keys_present: Record<string, boolean>
+  ai: AISettings
+}
+
+export type RoutingStrategy = 'automatic' | 'efficiency' | 'quality' | 'custom'
+
+export interface AISettings {
+  routing: RoutingStrategy
+  disabled_providers: string[]
+  models: Record<string, { enabled: boolean | null; api_model: string | null }>
+  preferred: Record<string, string[]>
+  job_token_budget: number
+  visual_analysis: boolean
+  max_visual_candidates: number
+  dynamic_composition: boolean
+}
+
+export interface AIModel {
+  id: string
+  display_name: string
+  provider: string
+  enabled: boolean
+  configured: boolean
+  capabilities: string[]
+  input_modalities: string[]
+}
+
+export interface AIStatus {
+  routing: RoutingStrategy
+  providers: { name: string; state: 'configured' | 'not_configured' | 'disabled' }[]
+  models: AIModel[]
+  routes: Record<string, string[]>
 }
 
 export interface SystemStatus {
@@ -174,6 +209,7 @@ export interface JobSettingsOverrides {
   max_clips?: number
   caption_style?: string
   ratio?: string
+  dynamic_composition?: boolean
 }
 
 /** An API error carrying the server's message and its actionable hint. */
@@ -235,11 +271,36 @@ export const api = {
       body: JSON.stringify({ url, cookies_from_browser: cookiesFromBrowser || null }),
     }),
 
-  uploadSource: (file: File) => {
-    const form = new FormData()
-    form.append('file', file)
-    return request<Source>('/api/sources/upload', { method: 'POST', body: form })
-  },
+  /**
+   * Upload with progress. XMLHttpRequest rather than fetch: fetch still has no
+   * upload progress, and a multi-gigabyte VOD over phone Wi-Fi needs a real bar.
+   */
+  uploadSource: (file: File, onProgress?: (fraction: number) => void) =>
+    new Promise<Source>((resolve, reject) => {
+      const form = new FormData()
+      form.append('file', file)
+      const xhr = new XMLHttpRequest()
+      xhr.open('POST', '/api/sources/upload')
+      xhr.responseType = 'json'
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable && onProgress) onProgress(event.loaded / event.total)
+      }
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(xhr.response as Source)
+          return
+        }
+        const detail = (xhr.response as { detail?: unknown } | null)?.detail
+        if (typeof detail === 'string') reject(new ApiError(detail, xhr.status))
+        else if (detail && typeof detail === 'object') {
+          const d = detail as { message?: string; hint?: string }
+          reject(new ApiError(d.message ?? 'Upload failed.', xhr.status, d.hint ?? ''))
+        } else reject(new ApiError(`Upload failed (${xhr.status}).`, xhr.status))
+      }
+      xhr.onerror = () =>
+        reject(new ApiError('The upload was interrupted. Check the connection and retry.', 0))
+      xhr.send(form)
+    }),
 
   listJobs: (limit = 25) => request<Job[]>(`/api/jobs?limit=${limit}`),
   getJob: (id: string) => request<Job>(`/api/jobs/${id}`),
@@ -296,6 +357,9 @@ export const api = {
     request<void>(`/api/settings/secrets/${key}`, { method: 'DELETE' }),
 
   mediaUrl: (jobId: string) => `/api/jobs/${jobId}/media`,
+  downloadAllUrl: (jobId: string) => `/api/jobs/${jobId}/download-all`,
+
+  aiStatus: () => request<AIStatus>('/api/ai/status'),
 }
 
 /** Format seconds as m:ss, or h:mm:ss past an hour. */

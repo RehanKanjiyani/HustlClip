@@ -1,26 +1,62 @@
 import { useEffect, useState } from 'react'
 
-import { api, type ProviderStatus, type Settings as SettingsData, type SystemStatus } from '../api'
+import {
+  api,
+  type AIStatus,
+  type ProviderStatus,
+  type RoutingStrategy,
+  type Settings as SettingsData,
+  type SystemStatus,
+} from '../api'
 import { ErrorNote } from '../components/ErrorNote'
 
-const SECRET_LABELS: Record<string, string> = {
-  anthropic: 'Anthropic API key',
-  openai: 'OpenAI-compatible API key',
-  gemini: 'Google Gemini API key',
-  huggingface_token: 'HuggingFace token',
+const SECRET_LABELS: Record<string, { label: string; hint: string }> = {
+  nvidia: {
+    label: 'NVIDIA API key',
+    hint: 'Recommended. Free at build.nvidia.com — powers finding and scoring moments.',
+  },
+  anthropic: {
+    label: 'Anthropic API key',
+    hint: 'Optional. Claude makes the final pick of the best clips when present.',
+  },
+  typesafe: {
+    label: 'TypeSafe (Jev) API key',
+    hint: 'Optional. Fast, cheap yes/no decisions (triage, repeat detection).',
+  },
+  openai: { label: 'OpenAI-compatible API key', hint: 'Optional fallback.' },
+  gemini: { label: 'Google Gemini API key', hint: 'Optional fallback.' },
+  huggingface_token: {
+    label: 'HuggingFace token',
+    hint: 'Only for speaker identification.',
+  },
 }
+
+const ROUTING: { value: RoutingStrategy; label: string; note: string }[] = [
+  { value: 'automatic', label: 'Automatic', note: 'Cheap models find, strong models judge.' },
+  { value: 'efficiency', label: 'Efficiency first', note: 'Keeps premium models out of it.' },
+  { value: 'quality', label: 'Quality first', note: 'Uses the strongest model for more steps.' },
+]
+
+const JUDGE_PROVIDERS = ['anthropic', 'nvidia', 'openai', 'gemini', 'ollama']
 
 export function Settings() {
   const [settings, setSettings] = useState<SettingsData | null>(null)
   const [providers, setProviders] = useState<ProviderStatus[]>([])
   const [system, setSystem] = useState<SystemStatus | null>(null)
+  const [ai, setAi] = useState<AIStatus | null>(null)
   const [error, setError] = useState<Error | null>(null)
   const [saved, setSaved] = useState(false)
+  const [advanced, setAdvanced] = useState(false)
 
   const reload = () => {
     void api.getSettings().then(setSettings).catch((e) => setError(e as Error))
-    void api.providerStatus().then(setProviders).catch(() => undefined)
     void api.system().then(setSystem).catch(() => undefined)
+    void api.aiStatus().then(setAi).catch(() => undefined)
+  }
+
+  // Live provider checks make network calls, so they run only when asked for.
+  const checkProviders = () => {
+    void api.providerStatus().then(setProviders).catch(() => undefined)
   }
 
   useEffect(reload, [])
@@ -29,6 +65,7 @@ export function Settings() {
     setError(null)
     try {
       setSettings(await api.putSettings(update))
+      void api.aiStatus().then(setAi).catch(() => undefined)
       setSaved(true)
       setTimeout(() => setSaved(false), 1600)
     } catch (err) {
@@ -39,7 +76,7 @@ export function Settings() {
   if (!settings) return <p className="pt-24 text-sm text-ink-500">Loading…</p>
 
   return (
-    <div className="max-w-4xl pt-14">
+    <div className="mx-auto max-w-3xl pt-10 sm:pt-14">
       <div className="rise flex items-baseline justify-between border-b border-ink-800 pb-5">
         <h1 className="font-display text-[clamp(2rem,4vw,3rem)] leading-none text-ink-100">
           Settings
@@ -67,84 +104,187 @@ export function Settings() {
         </p>
       )}
 
-      <Section title="AI provider" note="Which model picks the clips.">
-        <div className="space-y-1">
-          {providers.map((provider) => (
-            <button
-              key={provider.name}
-              onClick={() => patch({ active_provider: provider.name })}
-              className={[
-                'block w-full border-l-2 py-3 pl-3 text-left transition-colors duration-200',
-                provider.name === settings.active_provider
-                  ? 'border-sodium-500 bg-ink-850/60'
-                  : 'border-transparent hover:border-ink-700 hover:bg-ink-850/30',
-              ].join(' ')}
-            >
-              <div className="flex items-baseline justify-between gap-4">
-                <span className="text-sm text-ink-100">{provider.name}</span>
-                <span
-                  className={`text-xs ${provider.available ? 'text-signal-good' : 'text-ink-500'}`}
-                >
-                  {provider.available ? 'reachable' : provider.detail || 'unavailable'}
-                </span>
-              </div>
-              {provider.models.length > 0 && (
-                <span className="numeric mt-1 block truncate text-xs text-ink-600">
-                  {provider.models.slice(0, 6).join(' · ')}
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
-
-        <div className="mt-6 grid gap-5 sm:grid-cols-2">
-          <Field
-            label="Model"
-            value={settings.providers[settings.active_provider]?.model ?? ''}
-            placeholder="model name"
-            onCommit={(value) =>
-              patch({
-                providers: {
-                  [settings.active_provider]: {
-                    ...settings.providers[settings.active_provider],
-                    model: value,
-                  },
-                },
-              })
-            }
-          />
-          <Field
-            label="Base URL"
-            hint="Point at OpenRouter, Groq, DeepSeek, or a local server."
-            value={settings.providers[settings.active_provider]?.base_url ?? ''}
-            placeholder="https://…"
-            onCommit={(value) =>
-              patch({
-                providers: {
-                  [settings.active_provider]: {
-                    ...settings.providers[settings.active_provider],
-                    base_url: value || null,
-                  },
-                },
-              })
-            }
-          />
-        </div>
-      </Section>
-
-      <Section title="Keys" note="Stored in your OS keyring. Never sent anywhere but the provider.">
-        <div className="space-y-4">
-          {Object.entries(SECRET_LABELS).map(([key, label]) => (
+      <Section title="AI keys" note="Stored on the machine running HustlClip. Never shown again.">
+        <div className="space-y-6">
+          {Object.entries(SECRET_LABELS).map(([key, { label, hint }]) => (
             <SecretField
               key={key}
               secretKey={key}
               label={label}
+              hint={hint}
               present={settings.keys_present[key] ?? false}
               onChanged={reload}
               onError={setError}
             />
           ))}
         </div>
+      </Section>
+
+      <Section title="AI routing" note="Each step goes to the right model automatically.">
+        <div className="space-y-1">
+          {ROUTING.map((option) => (
+            <button
+              key={option.value}
+              onClick={() => patch({ ai: { ...settings.ai, routing: option.value } })}
+              className={[
+                'block w-full border-l-2 py-3 pl-3 text-left transition-colors duration-200',
+                settings.ai.routing === option.value
+                  ? 'border-sodium-500 bg-ink-850/60'
+                  : 'border-transparent hover:border-ink-700 hover:bg-ink-850/30',
+              ].join(' ')}
+            >
+              <span className="block text-sm text-ink-100">{option.label}</span>
+              <span className="mt-0.5 block text-xs text-ink-500">{option.note}</span>
+            </button>
+          ))}
+        </div>
+
+        {ai && (
+          <p className="mt-5 text-xs leading-relaxed text-ink-500">
+            {(ai.routes.candidate_discovery ?? []).length === 0
+              ? 'No AI model is available yet — add a key above.'
+              : `Finding moments: ${ai.routes.candidate_discovery[0]} · Final pick: ${
+                  ai.routes.final_judgment?.[0] ?? 'none (scores decide)'
+                }`}
+          </p>
+        )}
+
+        <button type="button" onClick={() => setAdvanced((v) => !v)} className="btn btn-quiet -ml-1 mt-5 py-2">
+          {advanced ? 'Hide advanced' : 'Advanced'}
+        </button>
+
+        {advanced && (
+          <div className="mt-4 space-y-8">
+            <div>
+              <p className="eyebrow">Strongest model (final judgment)</p>
+              <div className="mt-2 grid gap-5 sm:grid-cols-3">
+                <Select
+                  label="Provider"
+                  value={settings.active_provider}
+                  onChange={(value) => patch({ active_provider: value })}
+                  options={JUDGE_PROVIDERS}
+                />
+                <Field
+                  label="Model"
+                  value={settings.providers[settings.active_provider]?.model ?? ''}
+                  placeholder="model id"
+                  onCommit={(value) =>
+                    patch({
+                      providers: {
+                        [settings.active_provider]: {
+                          ...settings.providers[settings.active_provider],
+                          model: value,
+                        },
+                      },
+                    })
+                  }
+                />
+                <Field
+                  label="Base URL"
+                  value={settings.providers[settings.active_provider]?.base_url ?? ''}
+                  placeholder="default"
+                  onCommit={(value) =>
+                    patch({
+                      providers: {
+                        [settings.active_provider]: {
+                          ...settings.providers[settings.active_provider],
+                          base_url: value || null,
+                        },
+                      },
+                    })
+                  }
+                />
+              </div>
+            </div>
+
+            {ai && (
+              <div>
+                <p className="eyebrow">Models</p>
+                <ul className="mt-2">
+                  {ai.models.map((model) => (
+                    <li
+                      key={model.id}
+                      className="flex items-center justify-between gap-4 border-b border-ink-850 py-3"
+                    >
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm text-ink-100">{model.display_name}</span>
+                        <span className="block truncate text-xs text-ink-500">
+                          {model.configured ? model.capabilities.join(' · ') : 'no key'}
+                        </span>
+                      </span>
+                      <input
+                        type="checkbox"
+                        aria-label={`Use ${model.display_name}`}
+                        checked={model.enabled}
+                        onChange={(e) =>
+                          patch({
+                            ai: {
+                              ...settings.ai,
+                              models: {
+                                ...settings.ai.models,
+                                [model.id]: { enabled: e.target.checked, api_model: null },
+                              },
+                            },
+                          })
+                        }
+                        className="size-5 shrink-0 accent-sodium-500"
+                      />
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <div className="grid gap-5 sm:grid-cols-2">
+              <NumberField
+                label="Token limit per job (0 = none)"
+                value={settings.ai.job_token_budget}
+                onCommit={(value) => patch({ ai: { ...settings.ai, job_token_budget: value } })}
+              />
+              <NumberField
+                label="Clips checked visually"
+                value={settings.ai.max_visual_candidates}
+                onCommit={(value) =>
+                  patch({ ai: { ...settings.ai, max_visual_candidates: value } })
+                }
+              />
+            </div>
+            <label className="flex items-start gap-3 text-sm text-ink-200">
+              <input
+                type="checkbox"
+                checked={settings.ai.visual_analysis}
+                onChange={(e) =>
+                  patch({ ai: { ...settings.ai, visual_analysis: e.target.checked } })
+                }
+                className="mt-0.5 size-5 accent-sodium-500"
+              />
+              Look at frames of promising moments (gaming, reactions)
+            </label>
+
+            <div>
+              <button type="button" onClick={checkProviders} className="btn btn-ghost">
+                Test connections
+              </button>
+              {providers.length > 0 && (
+                <ul className="mt-3">
+                  {providers.map((provider) => (
+                    <li
+                      key={provider.name}
+                      className="flex items-baseline justify-between gap-4 border-b border-ink-850 py-2 text-sm"
+                    >
+                      <span className="text-ink-200">{provider.name}</span>
+                      <span
+                        className={`truncate text-xs ${provider.available ? 'text-signal-good' : 'text-ink-500'}`}
+                      >
+                        {provider.available ? 'reachable' : provider.has_key ? 'unreachable' : 'no key'}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        )}
       </Section>
 
       <Section title="Transcription">
@@ -179,7 +319,7 @@ export function Settings() {
             {!system?.diarization_available && (
               <span className="mt-1 block text-xs text-ink-500">
                 Needs the diarization extra:{' '}
-                <code className="text-ink-300">uv pip install &apos;autoclip[diarization]&apos;</code>
+                <code className="text-ink-300">uv pip install &apos;.[diarization]&apos;</code>
               </span>
             )}
           </span>
@@ -199,7 +339,7 @@ export function Settings() {
             onCommit={(value) => patch({ clips: { ...settings.clips, max_duration_s: value } })}
           />
           <NumberField
-            label="Max clips"
+            label="Clips per video"
             value={settings.clips.max_clips}
             onCommit={(value) => patch({ clips: { ...settings.clips, max_clips: value } })}
           />
@@ -417,12 +557,14 @@ function Select({
 function SecretField({
   secretKey,
   label,
+  hint,
   present,
   onChanged,
   onError,
 }: {
   secretKey: string
   label: string
+  hint: string
   present: boolean
   onChanged: () => void
   onError: (error: Error) => void
@@ -457,30 +599,33 @@ function SecretField({
   }
 
   return (
-    <div className="flex flex-wrap items-end gap-3">
-      <label className="min-w-56 flex-1">
-        <span className="eyebrow">
-          {label}
-          {present && <span className="ml-2 text-signal-good">set</span>}
-        </span>
-        <input
-          type="password"
-          className="field mt-1 text-sm"
-          value={value}
-          placeholder={present ? '••••••••••••' : 'paste to add'}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && save()}
-          autoComplete="off"
-        />
-      </label>
-      <button onClick={save} disabled={!value.trim() || busy} className="btn btn-ghost">
-        Save
-      </button>
-      {present && (
-        <button onClick={remove} disabled={busy} className="btn btn-quiet">
-          Remove
+    <div>
+      <div className="flex items-end gap-3">
+        <label className="min-w-0 flex-1">
+          <span className="eyebrow">
+            {label}
+            {present && <span className="ml-2 text-signal-good">set</span>}
+          </span>
+          <input
+            type="password"
+            className="field mt-1 text-base sm:text-sm"
+            value={value}
+            placeholder={present ? '••••••••••••' : 'paste to add'}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && save()}
+            autoComplete="off"
+          />
+        </label>
+        <button onClick={save} disabled={!value.trim() || busy} className="btn btn-ghost">
+          Save
         </button>
-      )}
+        {present && (
+          <button onClick={remove} disabled={busy} className="btn btn-quiet">
+            Remove
+          </button>
+        )}
+      </div>
+      <p className="mt-1.5 text-xs leading-snug text-ink-500">{hint}</p>
     </div>
   )
 }

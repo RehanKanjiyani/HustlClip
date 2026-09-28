@@ -87,6 +87,9 @@ def job_settings(job: Job) -> Settings:
     merged.clips = snapshot.clips
     merged.export = snapshot.export
     merged.ingest = snapshot.ingest
+    # Composition is a per-job creative choice, unlike the rest of the AI
+    # routing configuration.
+    merged.ai.dynamic_composition = snapshot.ai.dynamic_composition
     merged._fallback_secrets = dict(current._fallback_secrets)
     return merged
 

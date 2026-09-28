@@ -68,6 +68,7 @@ class JobSettingsIn(BaseModel):
     max_clips: int | None = Field(default=None, ge=1, le=50)
     caption_style: str | None = None
     ratio: Literal["9:16", "1:1", "16:9"] | None = None
+    dynamic_composition: bool | None = None
 
 
 class JobCreateIn(BaseModel):
@@ -154,6 +155,13 @@ class ClipOut(BaseModel):
     caption_style: str = "bold_pop"
     ratio: str = "9:16"
     exports: list[ExportOut] = Field(default_factory=list)
+    #: What kind of moment this is (story_payoff, insight, ...).
+    moment_type: str = ""
+    topic: str = ""
+    #: "selected" for AI-chosen clips; "fallback" when the video had too few
+    #: strong moments and code filled the set. Shown so nobody mistakes a
+    #: filler clip for a highlight.
+    quality: str = "selected"
 
     @classmethod
     def of(
@@ -163,7 +171,11 @@ class ClipOut(BaseModel):
         edit: models.ClipEdit | None = None,
         exports: list[models.Export] | None = None,
     ) -> ClipOut:
+        details = clip.details or {}
         return cls(
+            moment_type=str(details.get("moment_type", "")),
+            topic=str(details.get("topic", "")),
+            quality=str(details.get("quality", "selected")),
             id=clip.id,
             job_id=clip.job_id,
             rank=clip.rank,
@@ -233,6 +245,7 @@ class SettingsOut(BaseModel):
     #: Which providers have a key stored. The keys themselves never leave the
     #: keyring, so the UI shows presence, not value.
     keys_present: dict[str, bool] = Field(default_factory=dict)
+    ai: dict[str, Any] = Field(default_factory=dict)
 
 
 class SettingsIn(BaseModel):
@@ -242,6 +255,56 @@ class SettingsIn(BaseModel):
     clips: dict[str, Any] | None = None
     ingest: dict[str, Any] | None = None
     export: dict[str, Any] | None = None
+    ai: dict[str, Any] | None = None
+
+
+class AIModelOut(BaseModel):
+    id: str
+    display_name: str
+    provider: str
+    enabled: bool
+    #: Provider has a key (or needs none) and isn't switched off.
+    configured: bool
+    capabilities: list[str]
+    input_modalities: list[str]
+
+
+class AIProviderOut(BaseModel):
+    name: str
+    #: "configured", "not_configured", or "disabled" — never key material.
+    state: str
+
+
+class AIStatusOut(BaseModel):
+    routing: str
+    providers: list[AIProviderOut]
+    models: list[AIModelOut]
+    #: capability -> registry ids in the order they will be tried.
+    routes: dict[str, list[str]]
+
+
+class AIDecisionOut(BaseModel):
+    capability: str
+    provider: str
+    model: str
+    attempt: int
+    status: str
+    fallback_used: bool
+    fallback_reason: str | None = None
+    error_category: str | None = None
+    latency_ms: int | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    created_at: str
+
+
+class AIDecisionsOut(BaseModel):
+    decisions: list[AIDecisionOut]
+    #: Sums over records that reported usage; null when none did.
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    fallbacks: int = 0
+    failures: int = 0
 
 
 class SecretIn(BaseModel):
