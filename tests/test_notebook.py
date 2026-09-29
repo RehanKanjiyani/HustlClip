@@ -43,18 +43,29 @@ def test_every_code_cell_compiles(index: int) -> None:
     compile("".join(cell["source"]), f"cell{index}", "exec")
 
 
-def test_cli_flags_used_by_the_notebook_exist() -> None:
+def _options(command_name: str) -> set[str]:
+    """Every option string a CLI command accepts, read from the command itself.
+
+    Not from --help text: Rich wraps and truncates help to the terminal width,
+    which on CI runners hid flags that exist.
+    """
+    import typer.main
     from autoclip.cli import app
-    from typer.testing import CliRunner
 
-    help_text = CliRunner().invoke(app, ["clip", "--help"], env={"COLUMNS": "200"}).output
+    command = typer.main.get_command(app).commands[command_name]  # type: ignore[attr-defined]
+    return {opt for param in command.params for opt in (*param.opts, *param.secondary_opts)}
+
+
+def test_cli_flags_used_by_the_notebook_exist() -> None:
     source = "".join("".join(c["source"]) for c in load_builder().build()["cells"])
+    external = {"--no-autoupdate", "--url", "--python"}  # cloudflared / uv flags
 
-    for flag in set(re.findall(r'"(--[a-z-]+)"', source)):
-        if flag in ("--host", "--port", "--no-open", "--no-autoupdate", "--url", "--python"):
-            continue  # serve / cloudflared / uv flags, checked below or external
-        assert flag in help_text, f"hustlclip clip has no {flag}"
+    clip_options = _options("clip")
+    serve_options = _options("serve")
+    for flag in set(re.findall(r'"(--[a-z-]+)"', source)) - external:
+        assert flag in clip_options | serve_options, f"no hustlclip command accepts {flag}"
 
-    serve_help = CliRunner().invoke(app, ["serve", "--help"], env={"COLUMNS": "200"}).output
+    for flag in ("--max-clips", "--style", "--whisper-model", "--output-dir", "--dynamic-layouts"):
+        assert flag in clip_options
     for flag in ("--host", "--port", "--no-open"):
-        assert flag in serve_help
+        assert flag in serve_options

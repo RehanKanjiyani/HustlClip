@@ -70,44 +70,61 @@
     {
       "id": "U8",
       "name": "API: ai status, download-all, clip details",
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": "U9",
       "name": "frontend: phone-first flow + branding + settings",
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": "U10",
       "name": "Kaggle notebook + docs/MOBILE.md + README",
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": "U11",
       "name": "e2e verification with real media",
-      "status": "pending"
+      "status": "done_pending_rerun"
     },
     {
       "id": "U12",
       "name": "final verification + cleanup of temp folder",
-      "status": "pending"
+      "status": "in_progress"
     }
   ],
-  "current_unit": "U8",
+  "current_unit": "U12",
   "files_changed": [],
   "tests_run": [
     {
       "date": "2026-09-29",
       "cmd": "python -m pytest -q",
       "result": "384 passed, 28 skipped (e2e needs media; live Jev needs key)"
+    },
+    {
+      "date": "2026-09-29",
+      "cmd": "pytest -m e2e (real 200s video)",
+      "result": "28/29 passed; progress-regression bug fixed after"
+    },
+    {
+      "date": "2026-09-29",
+      "cmd": "hustlclip clip video -n 10 --dynamic-layouts -o out (local OpenAI-compatible stub, real HTTP)",
+      "result": "10 clips 1080x1920 h264+aac, zero overlap, captions visible, 5 AI + 5 fallback"
+    },
+    {
+      "date": "2026-09-29",
+      "cmd": "pytest -m 'not slow'",
+      "result": "all pass"
     }
   ],
   "known_failures": [],
   "unresolved_decisions": [
     "Kimi K3 / DeepSeek V4.1 Flash image-input support unverified without an NVIDIA key; handled as unsupported_modality fallback.",
-    "Live provider tests need user keys; normal tests are mocked."
+    "Live provider tests need user keys; normal tests are mocked.",
+    "PR: https://github.com/RehanKanjiyani/HustlClip/pull/1 (branch hustlclip-build). User enabled Actions on 2026-09-29.",
+    "Notebook not yet run on Kaggle (needs user account)."
   ],
-  "next_action": "API: ai status/decisions endpoints, download-all zip, clip details in ClipOut, SettingsIn.ai; then frontend",
+  "next_action": "Wait for CI on PR #1 and local slow+e2e rerun; merge PR into main; run cleanup_checklist (gh auth logout, delete temp folder).",
   "cleanup_checklist": [
     "gh auth logout --hostname github.com (token is in Windows Credential Manager, NOT the temp folder)",
     "Remove %LOCALAPPDATA%\\Temp\\hustlclip (tools, caches, venv, clone)",
