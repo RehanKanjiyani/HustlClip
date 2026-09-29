@@ -1,41 +1,19 @@
-# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
-.venv/
-venv/
-build/
-dist/
-.pytest_cache/
-.ruff_cache/
-.mypy_cache/
-.coverage
-htmlcov/
-
-# uv
-uv.lock
-
-# Node / frontend
+# Dependencies and builds
 node_modules/
-frontend/dist/
-frontend/.vite/
-*.local
+dist/
+.vercel/
+*.tsbuildinfo
 
-# Built frontend, emitted into the Python package by `npm run build`.
-# Regenerated from source; a release build produces it during packaging.
-backend/autoclip/static/
+# Copied from node_modules by `npm install` (scripts/copy-wasm.mjs)
+public/wasm/
 
-# AutoClip runtime artifacts
-.autoclip/
-*.db
-*.sqlite3
-
-# Test media (large binaries stay out of git; see tests/fixtures/README.md)
-tests/fixtures/media/
-tests/fixtures/**/*.mp4
-tests/fixtures/**/*.mkv
-tests/fixtures/**/*.webm
-tests/fixtures/**/*.wav
+# Test media (large binaries stay out of git)
+*.mp4
+*.mkv
+*.webm
+*.mov
+*.ogg
+*.wav
 
 # Editors / OS
 .vscode/
@@ -44,7 +22,7 @@ tests/fixtures/**/*.wav
 Thumbs.db
 desktop.ini
 
-# Secrets — never commit
+# Secrets: never commit
 .env
 .env.*
 !.env.example

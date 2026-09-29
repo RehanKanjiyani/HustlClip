@@ -5,16 +5,14 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for the report. The single most useful thing you can include is the
-        output of `autoclip doctor` — most problems in this space come down to an
-        ffmpeg build without libass, a GPU driver mismatch, or Python 3.13, and
-        `doctor` identifies all three immediately.
+        Thanks for the report. The most useful thing to include is the job's **Show details** text
+        (tap it at the bottom of the job screen and copy everything). It contains no keys.
 
   - type: textarea
-    id: doctor
+    id: details
     attributes:
-      label: Output of `autoclip doctor`
-      description: Paste the whole thing. It contains no secrets — keys are never printed.
+      label: Job details
+      description: Paste the text from "Show details" on the job screen.
       render: shell
     validations:
       required: true
@@ -27,47 +25,23 @@ body:
     validations:
       required: true
 
-  - type: textarea
-    id: repro
-    attributes:
-      label: Steps to reproduce
-      placeholder: |
-        1. Ingest a 10-minute talking-head video
-        2. Run with the Anthropic provider
-        3. Fails at the reframe stage with ...
-    validations:
-      required: true
-
   - type: dropdown
     id: stage
     attributes:
-      label: Which stage
+      label: Which step
       options:
         - Not sure
-        - Ingest (YouTube or upload)
-        - Prepare (audio, thumbnails)
-        - Transcribe
-        - Highlights (LLM)
-        - Reframe
-        - Captions
-        - Export
-        - Web UI
-        - Install or setup
+        - Sign in / setup
+        - Preparing the sound
+        - Listening to the video
+        - Choosing the best moments
+        - Making your clips
+        - Saving / sharing
     validations:
       required: true
 
   - type: textarea
-    id: source
+    id: device
     attributes:
-      label: Source video
-      description: >
-        Resolution, length, and roughly what's in it — one speaker, two people,
-        screen share. Reframe bugs in particular depend heavily on the footage.
-      placeholder: 1920x1080, 22 minutes, two people at a table
-
-  - type: textarea
-    id: logs
-    attributes:
-      label: Error output
-      description: The full error and traceback, if there is one.
-      render: shell
+      label: Phone and video
+      placeholder: OnePlus Nord CE4 Lite, Chrome 140. Video 1920x1080 MP4 from Seal, 2 h 10 min, English stream.

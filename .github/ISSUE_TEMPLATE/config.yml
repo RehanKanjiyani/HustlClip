@@ -1,8 +1,8 @@
 blank_issues_enabled: true
 contact_links:
-  - name: Setup problem
-    url: https://github.com/artbyjazi/autoclip#troubleshooting
-    about: Run `autoclip doctor` first — it diagnoses most install issues directly.
+  - name: Setup help
+    url: https://github.com/RehanKanjiyani/HustlClip/blob/main/docs/PHONE_GUIDE.md#troubleshooting
+    about: The phone guide's troubleshooting table covers most setup problems.
   - name: Security vulnerability
-    url: https://github.com/artbyjazi/autoclip/security/advisories/new
+    url: https://github.com/RehanKanjiyani/HustlClip/security/advisories/new
     about: Please report privately rather than in a public issue.

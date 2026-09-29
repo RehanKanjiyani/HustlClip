@@ -1,8 +1,39 @@
 # Changelog
 
-Notable changes. Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
-versions follow [semantic versioning](https://semver.org/) once 0.1.0 ships.
+Notable changes. Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 2.0.0: HustlClip on the web, 2026-09-30
+
+HustlClip becomes a phone web app. The Python backend and the Kaggle notebook are gone (they remain in git history).
+
+### Changed
+
+- **Runs in the phone's browser.** Decoding, silence detection, face detection (MediaPipe), layout, caption drawing
+  and H.264/AAC rendering (WebCodecs via Mediabunny) all happen on the phone. Clips are 1080x1920 MP4s.
+- **Hosted on Vercel (free).** Tiny serverless functions hold the keys and the password gate:
+  `/api/transcribe` (NVIDIA Riva speech-to-text over gRPC) and `/api/chat` (registry models only).
+- **Speech-to-text moved to NVIDIA's cloud:** Parakeet TDT 0.6B v2 for English (word timings, CTC 1.1B as fallback),
+  Whisper large v3 for Hindi and other languages (timings estimated inside short silence-cut pieces).
+- **Same selection rules:** word-index-only AI answers, sentence snap + silence alignment, exactly N distinct clips,
+  labelled filler when the AI finds too few.
+- **AI manager** keeps health tracking, validation, repair and fallback, and adds hedging (a second model starts if the
+  first is stuck in NVIDIA's free queue) and load spreading across models.
+- **New layouts:** two people too far apart are stacked; a streamer's small facecam goes on top with gameplay below.
+- **Resumable on the phone:** every step is saved in IndexedDB/OPFS; Resume continues where it stopped.
+- **Share to HustlClip** from Android's share sheet (installed web app), and **Save / share all** for finished clips.
+
+### Verified
+
+- 45 unit tests (engine, AI manager, reframe, API gate and proxies).
+- Live NVIDIA calls with a real key: speech-to-text (English word timings; Hindi) and the full AI funnel.
+- A real 3-minute talk, end to end in Chromium: transcript -> 4 judged clips -> faces tracked -> 1080x1920 H.264/AAC
+  clips with word-highlighted captions (checked frame by frame).
+- Not yet verified: a real Android phone, a 1-3 hour stream end to end, the share-target flow, Vercel itself.
+
+### Fixed along the way
+
+- Ogg pages from the browser's Opus encoder were too large for NVIDIA's decoder ("number of audio samples <= 0");
+  pages are now limited to one second.
 ## HustlClip — 2026-09-29
 
 AutoClip becomes HustlClip: exactly N distinct Shorts per video, chosen by a
