@@ -13,7 +13,7 @@ from ..db import store
 from ..db.models import Job, new_id
 from ..jobs.events import broker
 from ..jobs.queue import queue
-from .schemas import JobCreateIn, JobOut, JobSettingsIn
+from .schemas import AIDecisionOut, AIDecisionsOut, JobCreateIn, JobOut, JobSettingsIn
 
 log = logging.getLogger(__name__)
 
@@ -42,6 +42,8 @@ def _apply_overrides(settings, overrides: JobSettingsIn):
         merged.export.caption_style = overrides.caption_style
     if overrides.ratio:
         merged.export.ratio = overrides.ratio
+    if overrides.dynamic_composition is not None:
+        merged.ai.dynamic_composition = overrides.dynamic_composition
 
     return merged
 
@@ -159,3 +161,40 @@ async def job_clips(job_id: str):
     from .clips import list_clips_for_job
 
     return await list_clips_for_job(job_id)
+
+
+@router.get("/{job_id}/ai-decisions", response_model=AIDecisionsOut)
+async def job_ai_decisions(job_id: str) -> AIDecisionsOut:
+    """Every AI call the job made: provider, model, fallbacks, reported usage."""
+    job = await asyncio.to_thread(store.get_job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    rows = await asyncio.to_thread(store.list_ai_decisions, job_id)
+
+    def total(values: list[int | None]) -> int | None:
+        reported = [v for v in values if v is not None]
+        return sum(reported) if reported else None
+
+    return AIDecisionsOut(
+        decisions=[
+            AIDecisionOut(
+                capability=r.capability,
+                provider=r.provider,
+                model=r.model,
+                attempt=r.attempt,
+                status=r.status,
+                fallback_used=r.fallback_used,
+                fallback_reason=r.fallback_reason,
+                error_category=r.error_category,
+                latency_ms=r.latency_ms,
+                input_tokens=r.input_tokens,
+                output_tokens=r.output_tokens,
+                created_at=r.created_at,
+            )
+            for r in rows
+        ],
+        input_tokens=total([r.input_tokens for r in rows]),
+        output_tokens=total([r.output_tokens for r in rows]),
+        fallbacks=sum(1 for r in rows if r.fallback_used and r.status == "success"),
+        failures=sum(1 for r in rows if r.status != "success"),
+    )

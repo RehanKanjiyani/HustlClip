@@ -51,9 +51,10 @@ specific.
 
 ## Good first contributions
 
-**Prompts.** `backend/autoclip/prompts/highlight_v1.txt` is plain text and has
-more effect on output quality than most code changes. Add `highlight_v2.txt` and
-compare on the same source video. No Python required.
+**Prompts.** `backend/autoclip/prompts/*_v1.txt` (discovery, scoring, judgment,
+triage, visual, duplicates, composition) are plain text and have more effect on
+output quality than most code changes. Add a `_v2` beside one, point its capability
+at it in `intelligence/capabilities.py`, and compare on the same source video.
 
 **Caption styles.** Add a preset to `PRESETS` in `pipeline/captions.py`. Each is
 a dataclass; the UI picks it up automatically through `/api/caption-styles`.

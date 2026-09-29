@@ -12,6 +12,7 @@ from typing import Any
 
 from . import connection
 from .models import (
+    AIDecision,
     Clip,
     ClipEdit,
     ClipStatus,
@@ -244,8 +245,9 @@ def replace_clips(job_id: str, clips: list[Clip]) -> list[Clip]:
         conn.executemany(
             """
             INSERT INTO clips (id, job_id, rank, start_s, end_s, start_word, end_word,
-                               title, hook, score, reason, status, user_trimmed, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                               title, hook, score, reason, status, user_trimmed, created_at,
+                               details_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -263,6 +265,7 @@ def replace_clips(job_id: str, clips: list[Clip]) -> list[Clip]:
                     c.status,
                     int(c.user_trimmed),
                     c.created_at,
+                    json.dumps(c.details, ensure_ascii=False),
                 )
                 for c in clips
             ],
@@ -352,6 +355,56 @@ def get_clip_edit(clip_id: str) -> ClipEdit | None:
     with connection() as conn:
         row = conn.execute("SELECT * FROM clip_edits WHERE clip_id = ?", (clip_id,)).fetchone()
     return ClipEdit.from_row(row) if row else None
+
+
+# --------------------------------------------------------------------------
+# AI decision records
+# --------------------------------------------------------------------------
+
+
+def add_ai_decision(decision: AIDecision) -> AIDecision:
+    def flag(value: bool | None) -> int | None:
+        return None if value is None else int(value)
+
+    with connection() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO ai_decisions (job_id, capability, provider, model, attempt,
+                                      fallback_used, fallback_reason, latency_ms,
+                                      input_tokens, output_tokens, schema_valid,
+                                      quality_valid, status, error_category, detail,
+                                      created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                decision.job_id,
+                decision.capability,
+                decision.provider,
+                decision.model,
+                decision.attempt,
+                int(decision.fallback_used),
+                decision.fallback_reason,
+                decision.latency_ms,
+                decision.input_tokens,
+                decision.output_tokens,
+                flag(decision.schema_valid),
+                flag(decision.quality_valid),
+                decision.status,
+                decision.error_category,
+                decision.detail,
+                decision.created_at,
+            ),
+        )
+        decision.id = cursor.lastrowid
+    return decision
+
+
+def list_ai_decisions(job_id: str) -> list[AIDecision]:
+    with connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM ai_decisions WHERE job_id = ? ORDER BY id ASC", (job_id,)
+        ).fetchall()
+    return [AIDecision.from_row(r) for r in rows]
 
 
 # --------------------------------------------------------------------------

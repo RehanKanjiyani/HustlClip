@@ -153,8 +153,11 @@ export function Review() {
     <div className="pt-10">
       <div className="flex flex-wrap items-baseline justify-between gap-4 border-b border-ink-800 pb-5">
         <div className="min-w-0">
-          <Link to="/" className="eyebrow transition-colors hover:text-sodium-500">
-            ← All jobs
+          <Link
+            to={`/jobs/${job.id}/results`}
+            className="eyebrow transition-colors hover:text-sodium-500"
+          >
+            ← Clips
           </Link>
           <h1 className="mt-2 max-w-2xl truncate font-display text-[clamp(1.5rem,3vw,2.25rem)] leading-tight text-ink-100">
             {job.source?.title || 'Untitled'}

@@ -1,4 +1,4 @@
-"""AutoClip command-line interface."""
+"""HustlClip command-line interface."""
 
 from __future__ import annotations
 
@@ -11,11 +11,11 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from . import __version__, config, paths, system
+from . import __version__, config, paths, product, system
 
 app = typer.Typer(
-    name="autoclip",
-    help="Turn long video into caption-burned 9:16 clips — locally.",
+    name=product.SLUG,
+    help=f"{product.NAME} — {product.TAGLINE} Long video in, captioned vertical clips out.",
     no_args_is_help=True,
     add_completion=False,
 )
@@ -62,8 +62,8 @@ def _ffmpeg_install_hint() -> str:
 
 @app.command()
 def version() -> None:
-    """Print the AutoClip version."""
-    console.print(f"autoclip {__version__}")
+    """Print the HustlClip version."""
+    console.print(f"{product.SLUG} {__version__}")
 
 
 @app.command()
@@ -76,7 +76,8 @@ def doctor() -> None:
     console.print(
         Panel.fit(
             Text.from_markup(
-                f"[bold]AutoClip {__version__}[/bold]\n{report.platform}\nHome: {paths.root()}"
+                f"[bold]{product.NAME} {__version__}[/bold]\n{report.platform}\n"
+                f"Home: {paths.root()}"
             ),
             border_style="cyan",
         )
@@ -141,7 +142,7 @@ def doctor() -> None:
         if not ff.has_libass or "ass" in missing:
             remediation.append(
                 "This ffmpeg build has no libass, so captions cannot be burned in — "
-                f"which is most of what AutoClip does.\n{_ffmpeg_install_hint()}"
+                f"which is most of what HustlClip does.\n{_ffmpeg_install_hint()}"
             )
 
     console.print()
@@ -169,7 +170,7 @@ def doctor() -> None:
         remediation.append(
             "An NVIDIA GPU is present but CTranslate2 can't use it — usually missing cuDNN. "
             "Install the CUDA runtime libraries with "
-            "[cyan]uv pip install 'autoclip[gpu]'[/cyan], then re-run doctor. "
+            "[cyan]uv pip install '.[gpu]'[/cyan], then re-run doctor. "
             "Transcription will fall back to CPU until this is fixed."
         )
     elif gpu.ctranslate2_cuda:
@@ -224,8 +225,8 @@ def doctor() -> None:
     if not deps.whisperx and settings.whisper.diarization:
         remediation.append(
             "Diarization is enabled in settings but WhisperX isn't installed. "
-            "Run [cyan]uv pip install 'autoclip[diarization]'[/cyan] and set a HuggingFace "
-            "token with [cyan]autoclip config set-secret huggingface_token[/cyan]."
+            "Run [cyan]uv pip install '.[diarization]'[/cyan] and set a HuggingFace "
+            "token with [cyan]hustlclip config set-secret huggingface_token[/cyan]."
         )
 
     for missing, extra in (
@@ -235,7 +236,7 @@ def doctor() -> None:
     ):
         if missing:
             remediation.append(
-                f"[cyan]{extra}[/cyan] is not installed — reinstall AutoClip's core "
+                f"[cyan]{extra}[/cyan] is not installed — reinstall HustlClip's core "
                 "dependencies with [cyan]uv pip install -e '.[dev]'[/cyan]."
             )
 
@@ -274,7 +275,7 @@ def doctor() -> None:
     ):
         remediation.append(
             "No LLM provider is usable yet. Add an API key with "
-            "[cyan]autoclip config set-secret anthropic[/cyan] (or openai / gemini), "
+            "[cyan]hustlclip config set-secret anthropic[/cyan] (or openai / gemini), "
             "or install Ollama for a fully local setup."
         )
 
@@ -321,7 +322,7 @@ def doctor() -> None:
         console.print(
             Panel.fit(
                 "[bold red]Not ready.[/bold red] Resolve the items below, then re-run "
-                "[cyan]autoclip doctor[/cyan].",
+                "[cyan]hustlclip doctor[/cyan].",
                 border_style="red",
             )
         )
@@ -336,7 +337,7 @@ def doctor() -> None:
     raise typer.Exit(0 if report.ready else 1)
 
 
-config_app = typer.Typer(help="Inspect and modify AutoClip settings.", no_args_is_help=True)
+config_app = typer.Typer(help="Inspect and modify HustlClip settings.", no_args_is_help=True)
 app.add_typer(config_app, name="config")
 
 
@@ -395,7 +396,7 @@ def config_delete_secret(key: str = typer.Argument(..., help="Secret to remove."
 
 @app.command()
 def init() -> None:
-    """Create the AutoClip home directory and initialise the database."""
+    """Create the HustlClip home directory and initialise the database."""
     from . import db
 
     version_applied = db.init()
@@ -404,7 +405,7 @@ def init() -> None:
 
 @app.command()
 def clip(
-    target: str = typer.Argument(..., help="A YouTube URL, or a path to a local media file."),
+    target: str = typer.Argument(..., help="A video link (YouTube and others) or a local file."),
     provider: str = typer.Option("", "--provider", "-p", help="Override the active provider."),
     model: str = typer.Option("", "--whisper-model", help="Override the Whisper model."),
     max_clips: int = typer.Option(0, "--max-clips", "-n", help="Override the clip count."),
@@ -415,6 +416,17 @@ def clip(
     ),
     centre_crop: bool = typer.Option(
         False, "--centre-crop", help="Skip face tracking and centre-crop everything."
+    ),
+    dynamic_layouts: bool = typer.Option(
+        False,
+        "--dynamic-layouts",
+        help="Let AI switch between following the speaker and the whole frame.",
+    ),
+    output_dir: Path | None = typer.Option(
+        None,
+        "--output-dir",
+        "-o",
+        help="Also copy the finished clips here as 01-title.mp4 ... with a manifest.json.",
     ),
 ) -> None:
     """Turn a video into captioned vertical clips."""
@@ -442,11 +454,15 @@ def clip(
         settings.whisper.diarization = True
     if centre_crop:
         settings.export.__dict__["centre_crop"] = True
+    if dynamic_layouts:
+        settings.ai.dynamic_composition = True
 
     # --- ingest ---------------------------------------------------------
     try:
         with console.status("[cyan]Fetching source...", spinner="dots"):
-            if ingest.is_youtube_url(target):
+            if target.startswith(("http://", "https://")):
+                if not ingest.is_supported_url(target):
+                    raise ingest.IngestError("That link can't be used; use a public http(s) link.")
                 source = ingest.ingest_youtube(target, settings.ingest)
             else:
                 source = ingest.ingest_file(Path(target))
@@ -480,9 +496,19 @@ def clip(
         console=console,
     ) as progress:
         task = progress.add_task("Starting", total=1.0)
+        # A notebook cell or a log file is not a terminal: Rich's live bar
+        # prints nothing there, so fall back to one line per change.
+        plain = not console.is_terminal
+        last = {"message": "", "percent": -5}
 
         def on_progress(event: runner.ProgressEvent) -> None:
             progress.update(task, completed=event.overall, description=event.message)
+            if not plain:
+                return
+            percent = int(event.overall * 100)
+            if event.message != last["message"] or percent >= int(last["percent"]) + 5:
+                print(f"[{percent:3d}%] {event.message}", flush=True)
+                last["message"], last["percent"] = event.message, percent
 
         try:
             clips = asyncio.run(
@@ -509,6 +535,56 @@ def clip(
     console.print()
     console.print(table)
     console.print(f"\n[green]Exported to[/green] {paths.exports_dir() / job.id}")
+
+    if output_dir is not None:
+        written = collect_outputs(job.id, output_dir)
+        console.print(f"[green]Copied {len(written)} clips to[/green] {output_dir}")
+
+
+def collect_outputs(job_id: str, output_dir: Path) -> list[Path]:
+    """Copy a job's rendered clips to ``output_dir`` with a manifest.
+
+    Files are named ``01-title.mp4`` in rank order so they sort correctly in a
+    phone's file browser. ``manifest.json`` lists each clip's rank, title,
+    duration, source timestamps and whether it was AI-selected or filler.
+    """
+    import json
+    import shutil
+
+    from .db import store
+    from .pipeline.export import slugify_title
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    manifest: list[dict] = []
+    written: list[Path] = []
+    for clip in store.list_clips(job_id):
+        exports = store.list_exports(clip.id)
+        if not exports or not Path(exports[0].path).exists():
+            continue
+        source = Path(exports[0].path)
+        name = f"{clip.rank:02d}-{slugify_title(clip.title or 'clip')}{source.suffix}"
+        destination = output_dir / name
+        shutil.copy2(source, destination)
+        written.append(destination)
+        manifest.append(
+            {
+                "rank": clip.rank,
+                "file": destination.name,
+                "title": clip.title,
+                "duration_s": round(clip.duration_s, 2),
+                "source_start_s": round(clip.start_s, 2),
+                "source_end_s": round(clip.end_s, 2),
+                "score": clip.score,
+                "moment_type": clip.details.get("moment_type", ""),
+                "quality": clip.details.get("quality", "selected"),
+                "reason": clip.reason,
+            }
+        )
+    (output_dir / "manifest.json").write_text(
+        json.dumps({"job_id": job_id, "clips": manifest}, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return written
 
 
 @app.command()
@@ -637,7 +713,7 @@ def serve(
         True, "--open/--no-open", help="Open a browser once the server is up."
     ),
 ) -> None:
-    """Start the AutoClip web app."""
+    """Start the HustlClip web app."""
     import threading
     import webbrowser
 
@@ -656,12 +732,13 @@ def serve(
         )
 
     url = f"http://{'localhost' if host in ('127.0.0.1', '0.0.0.0') else host}:{port}"
-    console.print(f"[green]AutoClip[/green] starting on [cyan]{url}[/cyan]")
+    console.print(f"[green]{product.NAME}[/green] starting on [cyan]{url}[/cyan]")
 
     if host == "0.0.0.0":  # noqa: S104
         console.print(
-            "[yellow]Binding to 0.0.0.0 exposes AutoClip to your whole network.[/yellow] "
-            "There is no authentication — only do this on a network you trust."
+            "[yellow]Binding to 0.0.0.0 exposes HustlClip to your whole network.[/yellow] "
+            "Set HUSTLCLIP_ACCESS_TOKEN to require an access link, or only do this on a "
+            "network you trust."
         )
 
     if open_browser and not reload:

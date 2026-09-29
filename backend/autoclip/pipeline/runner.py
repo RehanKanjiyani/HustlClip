@@ -18,17 +18,22 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from .. import paths
 from ..config import Settings
 from ..config import load as load_settings
 from ..db import store
-from ..db.models import Clip, Export, Job, Source, new_id, utcnow
+from ..db.models import AIDecision, Clip, Export, Job, Source, new_id, utcnow
 from ..db.models import Transcript as TranscriptRow
-from ..providers import build_provider, detection_config
-from . import Stage, captions, export, ffmpeg, highlights, prepare, transcribe
+from ..intelligence import AIManager, DecisionRecord
+from . import Stage, captions, export, ffmpeg, prepare, transcribe
+from .candidates import Candidate
+from .funnel import Funnel, FunnelError
 from .prepare import Silence
 from .reframe import ReframeConfig, build_crop_path
 from .reframe.croppath import CropPath
+from .selection import Pick
 from .transcript import Transcript
 
 log = logging.getLogger(__name__)
@@ -37,12 +42,56 @@ log = logging.getLogger(__name__)
 #: time on a mid-range machine — transcription and export dominate.
 STAGE_WEIGHTS: dict[Stage, float] = {
     Stage.PREPARE: 0.05,
-    Stage.TRANSCRIBE: 0.35,
-    Stage.HIGHLIGHTS: 0.15,
+    Stage.TRANSCRIBE: 0.30,
+    Stage.HIGHLIGHTS: 0.10,
+    Stage.EVALUATE: 0.08,
+    Stage.SELECT: 0.02,
     Stage.REFRAME: 0.20,
     Stage.CAPTIONS: 0.02,
     Stage.EXPORT: 0.23,
 }
+
+
+def build_manager(settings: Settings, job_id: str) -> AIManager:
+    """The job's AI manager, persisting every decision record.
+
+    Module-level so tests (and the e2e suite) can substitute a scripted manager
+    the same way they used to substitute a provider.
+    """
+
+    def persist(record: DecisionRecord) -> None:
+        store.add_ai_decision(AIDecision(**record.to_dict()))
+
+    return AIManager(settings, job_id=job_id, on_record=persist)
+
+
+def job_settings(job: Job) -> Settings:
+    """Effective settings for a job.
+
+    Creative choices (Whisper, clip length/count, captions, ratio, ingest) come
+    from the snapshot taken when the job was created, so per-job overrides are
+    honoured by the queue. Provider and AI routing configuration comes from the
+    current settings, so fixing a key or disabling a provider takes effect on
+    retry. Secrets are never part of a snapshot.
+    """
+    current = load_settings()
+    if not job.settings:
+        return current
+    try:
+        snapshot = Settings.model_validate(job.settings)
+    except ValidationError:
+        log.warning("Job %s has an unreadable settings snapshot; using current settings.", job.id)
+        return current
+    merged = current.model_copy(deep=True)
+    merged.whisper = snapshot.whisper
+    merged.clips = snapshot.clips
+    merged.export = snapshot.export
+    merged.ingest = snapshot.ingest
+    # Composition is a per-job creative choice, unlike the rest of the AI
+    # routing configuration.
+    merged.ai.dynamic_composition = snapshot.ai.dynamic_composition
+    merged._fallback_secrets = dict(current._fallback_secrets)
+    return merged
 
 
 class JobCancelled(RuntimeError):
@@ -100,6 +149,15 @@ class JobWorkspace:
     def captions_dir(self) -> Path:
         return self.root / "captions"
 
+    def composition(self, clip_id: str) -> Path:
+        """Dynamic-composition timeline plus the crop path it produced."""
+        return self.root / "composition" / f"{clip_id}.json"
+
+    @property
+    def intel(self) -> Path:
+        """Artifacts of the intelligence funnel, one JSON file per step."""
+        return self.root / "intel"
+
 
 class PipelineRunner:
     """Executes one job."""
@@ -115,7 +173,7 @@ class PipelineRunner:
     ) -> None:
         self.job = job
         self.source = source
-        self.settings = settings or load_settings()
+        self.settings = settings or job_settings(job)
         self.on_progress = on_progress
         self._is_cancelled = is_cancelled or (lambda: False)
         self.workspace = JobWorkspace(job.id)
@@ -178,6 +236,8 @@ class PipelineRunner:
             silences = self._load_or_detect_silences(audio)
             clips = await self._stage_highlights(transcript, silences)
             crop_paths = self._stage_reframe(clips, transcript)
+            if self.settings.ai.dynamic_composition:
+                await self._compose(clips, transcript, crop_paths)
             self._stage_captions(clips, transcript)
             self._stage_export(clips, transcript, crop_paths)
         except JobCancelled:
@@ -271,32 +331,104 @@ class PipelineRunner:
     async def _stage_highlights(
         self, transcript: Transcript, silences: list[Silence]
     ) -> list[Clip]:
-        stage = Stage.HIGHLIGHTS
-        self._check_cancelled()
+        """Discovery → evaluation → selection, as three visible stages.
 
+        Selected clips are the stage's durable output: once they exist, a retry
+        goes straight to reframing. Inside, the funnel's own artifacts make each
+        AI step resumable too.
+        """
         existing = store.list_clips(self.job.id)
         if existing:
             log.info("Reusing %d existing clips for job %s.", len(existing), self.job.id)
-            self._finish_stage(stage)
+            for stage in (Stage.HIGHLIGHTS, Stage.EVALUATE, Stage.SELECT):
+                self._finish_stage(stage)
             return existing
 
-        provider_name = self.job.provider or self.settings.active_provider
-        provider = build_provider(provider_name, self.settings)
-        config = detection_config(self.settings)
-
-        self._emit(stage, 0.0, f"Finding highlights with {provider.name}")
-        clips = await highlights.detect(
-            transcript,
-            provider,
-            config,
-            job_id=self.job.id,
+        target = self.settings.clips.max_clips
+        funnel = Funnel(
+            manager=build_manager(self.settings, self.job.id),
+            transcript=transcript,
             silences=silences,
-            on_progress=self._stage_progress(stage),
+            source=self.source,
+            settings=self.settings,
+            workdir=self.workspace.intel,
+            target=target,
+            is_cancelled=self._is_cancelled,
         )
 
+        def reporter(stage: Stage):
+            def report(fraction: float, message: str) -> None:
+                self._emit(stage, max(0.0, min(1.0, fraction)), message)
+
+            return report
+
+        self._check_cancelled()
+        self._emit(Stage.HIGHLIGHTS, 0.0, "Finding moments")
+        try:
+            found, content_type = await funnel.discover(reporter(Stage.HIGHLIGHTS))
+        except FunnelError as exc:
+            raise PipelineError(str(exc), stage=Stage.HIGHLIGHTS) from exc
+        self._finish_stage(Stage.HIGHLIGHTS)
+
+        self._check_cancelled()
+        self._emit(Stage.EVALUATE, 0.0, "Evaluating moments")
+        pool = await funnel.evaluate(found, content_type, reporter(Stage.EVALUATE))
+        self._finish_stage(Stage.EVALUATE)
+
+        self._check_cancelled()
+        self._emit(Stage.SELECT, 0.0, f"Selecting the best {target}")
+        picks = await funnel.select(pool, reporter(Stage.SELECT))
+        if not picks:
+            raise PipelineError(
+                "No clip of the configured length fits in this video.", stage=Stage.SELECT
+            )
+
+        clips = [self._clip_from_pick(pick, transcript, content_type) for pick in picks]
         store.replace_clips(self.job.id, clips)
-        self._finish_stage(stage)
+        self._finish_stage(Stage.SELECT)
         return clips
+
+    def _clip_from_pick(self, pick: Pick, transcript: Transcript, content_type: str) -> Clip:
+        candidate: Candidate = pick.candidate
+        verdict = candidate.verdict or {}
+        scores = candidate.scores or {}
+        title = (
+            verdict.get("title")
+            or scores.get("title")
+            or candidate.title
+            or transcript.text_between(
+                candidate.start_word, min(candidate.end_word, candidate.start_word + 8)
+            )
+        )
+        hook = candidate.hook or transcript.text_between(
+            candidate.start_word, min(candidate.end_word, candidate.start_word + 10)
+        )
+        return Clip(
+            id=new_id(),
+            job_id=self.job.id,
+            start_s=candidate.start_s,
+            end_s=candidate.end_s,
+            start_word=candidate.start_word,
+            end_word=candidate.end_word,
+            rank=pick.rank,
+            title=title.strip()[:120],
+            hook=hook.strip()[:300],
+            score=round(pick.final * 100),
+            reason=(verdict.get("reason") or candidate.reason or "").strip(),
+            details={
+                "candidate_id": candidate.id,
+                "moment_type": candidate.moment_type,
+                "topic": scores.get("topic", ""),
+                "tier": pick.tier,
+                "quality": "fallback" if pick.tier == "fallback" else "selected",
+                "content_type": content_type,
+                "dimensions": scores.get("dimensions", {}),
+                "visual": candidate.visual or None,
+                "judge_kept": verdict.get("keep"),
+                "boundary_adjusted": candidate.adjusted,
+                "selection": pick.explain(),
+            },
+        )
 
     def _stage_reframe(self, clips: list[Clip], transcript: Transcript) -> dict[str, CropPath]:
         stage = Stage.REFRAME
@@ -311,12 +443,16 @@ class PipelineRunner:
             self._finish_stage(stage)
             return crop_paths
 
+        # `hustlclip clip --centre-crop` sets this; it was previously accepted
+        # and silently ignored.
+        centre_only = bool(self.settings.export.__dict__.get("centre_crop", False))
         config = ReframeConfig(
             aspect_w=9 if self.settings.export.ratio == "9:16" else 1,
             aspect_h=16 if self.settings.export.ratio == "9:16" else 1,
+            centre_only=centre_only,
         )
         if self.settings.export.ratio == "16:9":
-            config = ReframeConfig(aspect_w=16, aspect_h=9)
+            config = ReframeConfig(aspect_w=16, aspect_h=9, centre_only=centre_only)
 
         for index, clip in enumerate(clips):
             self._check_cancelled()
@@ -337,6 +473,83 @@ class PipelineRunner:
 
         self._finish_stage(stage)
         return crop_paths
+
+    async def _compose(
+        self, clips: list[Clip], transcript: Transcript, crop_paths: dict[str, CropPath]
+    ) -> None:
+        """Optional dynamic composition, applied on top of the reframe result.
+
+        The original crop path stays in ``crops/``; the composed one is kept
+        with its timeline under ``composition/`` so a retry reuses it and the
+        review player can show exactly what will render. Any failure keeps the
+        standard framing for that clip — composition is never worth a failed job.
+        """
+        from ..intelligence import CapabilityUnavailable
+        from ..intelligence import capabilities as caps
+        from . import composition
+
+        manager = build_manager(self.settings, self.job.id)
+        if not manager.available(caps.DYNAMIC_COMPOSITION):
+            log.info("Dynamic composition requested but no model can serve it; skipping.")
+            return
+
+        for index, clip in enumerate(clips):
+            self._check_cancelled()
+            path = crop_paths.get(clip.id)
+            if path is None or not path.segments:
+                continue
+            marker = self.workspace.composition(clip.id)
+            if marker.exists():
+                crop_paths[clip.id] = CropPath.from_dict(
+                    json.loads(marker.read_text(encoding="utf-8"))["crop_path"]
+                )
+                continue
+
+            request = caps.CompositionRequest(
+                candidate_id=clip.id,
+                duration_s=clip.duration_s,
+                transcript=transcript.text_between(clip.start_word, clip.end_word),
+                speaker_count=len(
+                    {
+                        w.speaker
+                        for w in transcript.slice(clip.start_word, clip.end_word)
+                        if w.speaker
+                    }
+                )
+                or 1,
+                shots=composition.shots_for_prompt(path),
+                allowed_layouts=list(composition.SUPPORTED_LAYOUTS),
+            )
+            # Reframe is already counted as finished; pass overall explicitly
+            # so this message can't push the bar past its true position.
+            self._emit(
+                Stage.REFRAME,
+                1.0,
+                f"Choosing layouts for clip {index + 1}",
+                overall=self._completed_weight,
+            )
+            try:
+                result = await manager.run(caps.DYNAMIC_COMPOSITION, request)
+            except CapabilityUnavailable as exc:
+                log.warning(
+                    "Composition failed for clip %s (%s); keeping standard framing.", clip.id, exc
+                )
+                continue
+
+            edges = [s.start_s for s in path.segments] + [path.duration_s]
+            timeline = composition.normalise_timeline(result.output, path.duration_s, edges)
+            composed = composition.apply(path, timeline)
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(
+                json.dumps(
+                    {
+                        "timeline": [t.__dict__ for t in timeline],
+                        "crop_path": composed.to_dict(),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            crop_paths[clip.id] = composed
 
     def _stage_captions(self, clips: list[Clip], transcript: Transcript) -> None:
         stage = Stage.CAPTIONS
@@ -365,10 +578,24 @@ class PipelineRunner:
         for index, clip in enumerate(clips):
             self._check_cancelled()
 
+            # A retry after a failed render resumes at the clip that failed:
+            # clips already rendered with the same look are not encoded again.
+            if any(
+                e.ratio == ratio
+                and e.style == style.key
+                and Path(e.path).exists()
+                and Path(e.path).stat().st_size > 0
+                for e in store.list_exports(clip.id)
+            ):
+                self._emit(stage, (index + 1) / len(clips), f"Clip {index + 1} already rendered")
+                continue
+
             crop_path = crop_paths.get(clip.id) or self._fallback_crop_path(clip, ratio)
             words = transcript.slice(clip.start_word, clip.end_word)
+            # The rank prefix keeps names unique (two clips can share a title)
+            # and sorts files in the order they were ranked.
             destination = destination_dir / export.output_filename(
-                clip.title or f"clip-{clip.rank}", ratio
+                f"{clip.rank:02d} {clip.title or 'clip'}", ratio
             )
 
             request = export.ExportRequest(

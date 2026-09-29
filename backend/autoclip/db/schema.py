@@ -104,9 +104,45 @@ def _migration_v1(conn: sqlite3.Connection) -> None:
     conn.executescript(_V1)
 
 
+# v2 — HustlClip intelligence layer.
+#
+# ai_decisions: one row per AI attempt made by the AI manager. Token counts and
+# latency are NULL when the provider did not report them; never estimated.
+# clips.details_json: normalised intelligence metadata for the selected clip
+# (moment type, dimension scores, quality tier, selection reason).
+_V2 = """
+CREATE TABLE ai_decisions (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id          TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    capability      TEXT NOT NULL,
+    provider        TEXT NOT NULL,
+    model           TEXT NOT NULL,
+    attempt         INTEGER NOT NULL,
+    fallback_used   INTEGER NOT NULL DEFAULT 0,
+    fallback_reason TEXT,
+    latency_ms      INTEGER,
+    input_tokens    INTEGER,
+    output_tokens   INTEGER,
+    schema_valid    INTEGER,
+    quality_valid   INTEGER,
+    status          TEXT NOT NULL,
+    error_category  TEXT,
+    detail          TEXT NOT NULL DEFAULT '',
+    created_at      TEXT NOT NULL
+);
+CREATE INDEX idx_ai_decisions_job ON ai_decisions(job_id);
+
+ALTER TABLE clips ADD COLUMN details_json TEXT NOT NULL DEFAULT '{}';
+"""
+
+
+def _migration_v2(conn: sqlite3.Connection) -> None:
+    conn.executescript(_V2)
+
+
 #: Ordered migrations. Index + 1 is the resulting ``user_version``.
 #: Append only — never edit a migration that has shipped.
-MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [_migration_v1]
+MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [_migration_v1, _migration_v2]
 
 SCHEMA_VERSION = len(MIGRATIONS)
 

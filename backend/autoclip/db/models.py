@@ -141,6 +141,9 @@ class Clip:
     status: ClipStatus = "candidate"
     user_trimmed: bool = False
     created_at: str = field(default_factory=utcnow)
+    #: Intelligence metadata: moment_type, topic, dimension scores, quality
+    #: tier ("selected" / "fallback"), and why it was selected.
+    details: dict[str, Any] = field(default_factory=dict)
 
     @property
     def duration_s(self) -> float:
@@ -148,7 +151,9 @@ class Clip:
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> Clip:
+        keys = row.keys()
         return cls(
+            details=json.loads(row["details_json"] or "{}") if "details_json" in keys else {},
             id=row["id"],
             job_id=row["job_id"],
             start_s=row["start_s"],
@@ -183,6 +188,54 @@ class ClipEdit:
             caption_style=row["caption_style"],
             ratio=row["ratio"],
             updated_at=row["updated_at"],
+        )
+
+
+@dataclass
+class AIDecision:
+    """A persisted AI manager decision record (see intelligence.manager)."""
+
+    job_id: str
+    capability: str
+    provider: str
+    model: str
+    attempt: int
+    status: str
+    fallback_used: bool = False
+    fallback_reason: str | None = None
+    latency_ms: int | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    schema_valid: bool | None = None
+    quality_valid: bool | None = None
+    error_category: str | None = None
+    detail: str = ""
+    created_at: str = field(default_factory=utcnow)
+    id: int | None = None
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> AIDecision:
+        def flag(value: Any) -> bool | None:
+            return None if value is None else bool(value)
+
+        return cls(
+            id=row["id"],
+            job_id=row["job_id"],
+            capability=row["capability"],
+            provider=row["provider"],
+            model=row["model"],
+            attempt=row["attempt"],
+            status=row["status"],
+            fallback_used=bool(row["fallback_used"]),
+            fallback_reason=row["fallback_reason"],
+            latency_ms=row["latency_ms"],
+            input_tokens=row["input_tokens"],
+            output_tokens=row["output_tokens"],
+            schema_valid=flag(row["schema_valid"]),
+            quality_valid=flag(row["quality_valid"]),
+            error_category=row["error_category"],
+            detail=row["detail"],
+            created_at=row["created_at"],
         )
 
 

@@ -3,12 +3,12 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "autoclip"
+name = "hustlclip"
 version = "0.1.0.dev0"
-description = "Open-source, local-first AI video clipper — long video in, caption-burned 9:16 clips out."
+description = "HustlClip — AI-assisted short-form clipper: one long VOD in, ten finished 9:16 Shorts out."
 readme = "README.md"
 license = { file = "LICENSE" }
-authors = [{ name = "Jad Ghazi" }]
+authors = [{ name = "Jad Ghazi" }, { name = "Rehan Kanjiyani" }]
 keywords = ["video", "shorts", "clips", "whisper", "ffmpeg", "captions", "tiktok", "reels"]
 classifiers = [
   "Development Status :: 3 - Alpha",
@@ -87,11 +87,14 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/artbyjazi/autoclip"
-Repository = "https://github.com/artbyjazi/autoclip"
-Issues = "https://github.com/artbyjazi/autoclip/issues"
+Homepage = "https://github.com/RehanKanjiyani/HustlClip"
+Repository = "https://github.com/RehanKanjiyani/HustlClip"
+Issues = "https://github.com/RehanKanjiyani/HustlClip/issues"
+Upstream = "https://github.com/artbyjazi/autoclip"
 
 [project.scripts]
+hustlclip = "autoclip.cli:app"
+# Kept so existing scripts and muscle memory keep working.
 autoclip = "autoclip.cli:app"
 
 [tool.hatch.build.targets.wheel]
@@ -110,10 +113,16 @@ exclude = ["frontend/node_modules", "frontend/dist"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# Generated from notebooks/build_notebook.py, which is linted instead.
+extend-exclude = ["notebooks/*.ipynb"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "C4"]
 ignore = ["B008"]  # typer/fastapi use function calls in argument defaults by design
+
+[tool.ruff.lint.per-file-ignores]
+# Notebook cell templates: long URLs and shell lines read better unwrapped.
+"notebooks/build_notebook.py" = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

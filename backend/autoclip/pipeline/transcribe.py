@@ -75,7 +75,7 @@ def _model_load_error(exc: Exception, device: str, compute_type: str) -> Transcr
         return TranscriptionError(
             f"Could not load Whisper on the GPU: {message}\n\n"
             "This is a missing CUDA runtime library. Install it with "
-            "`uv pip install 'autoclip[gpu]'`, then retry — the job resumes "
+            "`uv pip install '.[gpu]'`, then retry — the job resumes "
             "from this stage."
         )
 
@@ -108,7 +108,7 @@ def transcribe(
         from faster_whisper import WhisperModel
     except ImportError as exc:  # pragma: no cover - faster-whisper is a core dep
         raise TranscriptionError(
-            "faster-whisper is not installed. Run `autoclip doctor` for details."
+            "faster-whisper is not installed. Run `hustlclip doctor` for details."
         ) from exc
 
     device, compute_type = resolve_compute(settings)
@@ -213,14 +213,14 @@ def diarize(
     if pipeline_cls is None:
         log.warning(
             "WhisperX is not installed; skipping diarization. "
-            "Install it with `uv pip install 'autoclip[diarization]'`."
+            "Install it with `uv pip install '.[diarization]'`."
         )
         return transcript
 
     if not hf_token:
         log.warning(
             "Diarization needs a HuggingFace token. Set one with "
-            "`autoclip config set-secret huggingface_token`, and accept the pyannote "
+            "`hustlclip config set-secret huggingface_token`, and accept the pyannote "
             "model licences on huggingface.co. Continuing without speaker labels."
         )
         return transcript

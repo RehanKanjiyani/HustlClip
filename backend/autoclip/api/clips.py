@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from pathlib import Path
 
@@ -88,7 +89,14 @@ async def clip_crop_path(clip_id: str) -> dict:
     if clip is None:
         raise HTTPException(status_code=404, detail="Clip not found.")
 
-    cached = JobWorkspace(clip.job_id).crop_path(clip.id)
+    workspace = JobWorkspace(clip.job_id)
+    composed = workspace.composition(clip.id)
+    if composed.exists():
+        # Dynamic composition rewrote the framing; preview what will render.
+        data = await asyncio.to_thread(composed.read_text, encoding="utf-8")
+        return json.loads(data)["crop_path"]
+
+    cached = workspace.crop_path(clip.id)
     if not cached.exists():
         # Audio-only sources and pre-reframe jobs legitimately have none; the
         # client falls back to a centre crop.
@@ -250,6 +258,57 @@ async def download_export(export_id: str) -> FileResponse:
     return FileResponse(path, media_type="video/mp4", filename=path.name)
 
 
+@router.get("/jobs/{job_id}/download-all")
+async def download_all(job_id: str) -> FileResponse:
+    """Every rendered clip of a job in one zip — one tap on a phone.
+
+    Stored, not deflated: MP4 is already compressed, so deflating only costs
+    time. The zip is rebuilt whenever an export is newer than it.
+    """
+    job = await asyncio.to_thread(store.get_job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+
+    archive = await asyncio.to_thread(_build_archive, job_id)
+    if archive is None:
+        raise HTTPException(status_code=404, detail="No rendered clips to download yet.")
+    return FileResponse(archive, media_type="application/zip", filename=archive.name)
+
+
+def _build_archive(job_id: str) -> Path | None:
+    import re
+    import zipfile
+
+    from .. import product
+
+    entries: list[tuple[str, Path]] = []
+    for clip in store.list_clips(job_id):
+        exports = store.list_exports(clip.id)
+        if not exports:
+            continue
+        path = Path(exports[0].path)
+        if not path.exists():
+            continue
+        title = re.sub(r"[^\w\- ]+", "", clip.title or "clip").strip()[:60] or "clip"
+        entries.append((f"{clip.rank:02d} - {title}{path.suffix}", path))
+    if not entries:
+        return None
+
+    folder = paths.exports_dir() / job_id
+    folder.mkdir(parents=True, exist_ok=True)
+    archive = folder / f"{product.SLUG}-{job_id}.zip"
+    newest = max(p.stat().st_mtime for _, p in entries)
+    if archive.exists() and archive.stat().st_mtime >= newest:
+        return archive
+
+    partial = archive.with_suffix(".zip.part")
+    with zipfile.ZipFile(partial, "w", compression=zipfile.ZIP_STORED) as bundle:
+        for name, path in entries:
+            bundle.write(path, arcname=name)
+    partial.replace(archive)
+    return archive
+
+
 @router.get("/jobs/{job_id}/media")
 async def job_media(job_id: str) -> FileResponse:
     """Serve the source video, so the review player can scrub the original.
@@ -312,6 +371,9 @@ def _crop_path_for(workspace: JobWorkspace, clip, source, ratio: str) -> CropPat
     A re-export at a different ratio can't reuse a path computed for the
     original one, so the geometry is recomputed rather than stretched.
     """
+    composed = workspace.composition(clip.id)
+    if composed.exists() and ratio == "9:16":
+        return CropPath.from_dict(json.loads(composed.read_text(encoding="utf-8"))["crop_path"])
     cached = workspace.crop_path(clip.id)
     if cached.exists() and ratio == "9:16":
         return CropPath.load(cached)

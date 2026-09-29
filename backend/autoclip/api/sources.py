@@ -63,6 +63,35 @@ async def ingest_youtube(payload: YouTubeIngestIn) -> SourceOut:
     return SourceOut.of(source)
 
 
+@router.post("/url", response_model=SourceOut, status_code=201)
+async def ingest_url(payload: YouTubeIngestIn) -> SourceOut:
+    """Download any public video link yt-dlp supports (YouTube, Twitch VODs,
+    direct .mp4 links, ...) and register it as a source."""
+    if not ingest.is_supported_url(payload.url):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "That link can't be used.",
+                "hint": "Paste a public http(s) link to a video.",
+            },
+        )
+
+    settings = load_settings().ingest
+    if payload.cookies_from_browser is not None:
+        settings = settings.model_copy(
+            update={"cookies_from_browser": payload.cookies_from_browser}
+        )
+    try:
+        source = await asyncio.to_thread(ingest.ingest_youtube, payload.url, settings)
+    except ingest.IngestError as exc:
+        raise HTTPException(
+            status_code=422, detail={"message": str(exc), "hint": exc.hint}
+        ) from exc
+
+    await asyncio.to_thread(store.create_source, source)
+    return SourceOut.of(source)
+
+
 @router.post("/upload", response_model=SourceOut, status_code=201)
 async def upload_source(file: UploadFile = File(...)) -> SourceOut:
     """Accept a media upload and register it as a source."""

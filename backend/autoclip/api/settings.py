@@ -8,9 +8,20 @@ import logging
 from fastapi import APIRouter, HTTPException
 
 from .. import config, models, system
-from ..providers import PROVIDERS, build_provider
+from ..intelligence import AIManager, build_registry, capabilities
+from ..intelligence.registry import provider_configured
+from ..providers import DECISION_PROVIDERS, PROVIDERS, build_decision_provider, build_provider
 from ..providers.base import ProviderStatus
-from .schemas import ProviderStatusOut, SecretIn, SettingsIn, SettingsOut, SystemOut
+from .schemas import (
+    AIModelOut,
+    AIProviderOut,
+    AIStatusOut,
+    ProviderStatusOut,
+    SecretIn,
+    SettingsIn,
+    SettingsOut,
+    SystemOut,
+)
 
 log = logging.getLogger(__name__)
 
@@ -27,6 +38,7 @@ def _settings_out(settings: config.Settings) -> SettingsOut:
         ingest=payload["ingest"],
         export=payload["export"],
         insecure_secret_storage=payload["insecure_secret_storage"],
+        ai=payload["ai"],
         keys_present={
             name: config.get_secret(name, settings) is not None for name in config.KEYED_PROVIDERS
         }
@@ -73,6 +85,26 @@ async def put_settings(payload: SettingsIn) -> SettingsOut:
         for name, values in updates["providers"].items():
             provider_settings = settings.provider(name)
             settings.providers[name] = provider_settings.model_copy(update=values)
+
+    if "ai" in updates:
+        try:
+            merged = settings.ai.model_dump() | updates["ai"]
+            settings.ai = config.AISettings.model_validate(merged)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid AI settings: {exc}") from exc
+        known_models = {entry.id for entry in build_registry(settings)}
+        unknown = [m for m in settings.ai.models if m not in known_models] + [
+            m for ids in settings.ai.preferred.values() for m in ids if m not in known_models
+        ]
+        if unknown:
+            raise HTTPException(
+                status_code=400, detail=f"Unknown model id(s): {', '.join(sorted(set(unknown)))}"
+            )
+        unknown_caps = [c for c in settings.ai.preferred if c not in capabilities.SPECS]
+        if unknown_caps:
+            raise HTTPException(
+                status_code=400, detail=f"Unknown capability: {', '.join(unknown_caps)}"
+            )
 
     if settings.clips.min_duration_s >= settings.clips.max_duration_s:
         raise HTTPException(
@@ -127,7 +159,63 @@ async def providers_status() -> list[ProviderStatusOut]:
             has_key=has_key,
         )
 
-    return list(await asyncio.gather(*(check(name) for name in PROVIDERS)))
+    async def check_decision(name: str) -> ProviderStatusOut:
+        has_key = config.get_secret(name, settings) is not None
+        try:
+            status = await build_decision_provider(name, settings).health_check()
+        except Exception as exc:
+            status = ProviderStatus(name=name, available=False, detail=str(exc)[:200])
+        return ProviderStatusOut(
+            name=name,
+            available=status.available,
+            detail=status.detail,
+            models=status.models,
+            requires_key=True,
+            has_key=has_key,
+        )
+
+    return list(
+        await asyncio.gather(
+            *(check(name) for name in PROVIDERS),
+            *(check_decision(name) for name in DECISION_PROVIDERS),
+        )
+    )
+
+
+@router.get("/ai/status", response_model=AIStatusOut)
+async def ai_status() -> AIStatusOut:
+    """Which providers and models the AI manager can use, and in what order.
+
+    Computed from configuration only — no network calls — so it is cheap
+    enough for the settings screen to poll. Key values are never included.
+    """
+    settings = config.load()
+    registry = build_registry(settings)
+    providers = sorted({entry.provider for entry in registry} | set(DECISION_PROVIDERS))
+
+    def state(name: str) -> str:
+        if name in settings.ai.disabled_providers:
+            return "disabled"
+        return "configured" if provider_configured(name, settings) else "not_configured"
+
+    manager = AIManager(settings, registry=registry)
+    return AIStatusOut(
+        routing=settings.ai.routing,
+        providers=[AIProviderOut(name=name, state=state(name)) for name in providers],
+        models=[
+            AIModelOut(
+                id=entry.id,
+                display_name=entry.display_name,
+                provider=entry.provider,
+                enabled=entry.enabled,
+                configured=provider_configured(entry.provider, settings),
+                capabilities=sorted(entry.capabilities),
+                input_modalities=list(entry.input_modalities),
+            )
+            for entry in registry
+        ],
+        routes={name: [e.id for e in manager.eligible(name)] for name in capabilities.SPECS},
+    )
 
 
 @router.get("/system", response_model=SystemOut)

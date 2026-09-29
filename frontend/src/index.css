@@ -1,7 +1,7 @@
 @import 'tailwindcss';
 
 /* --------------------------------------------------------------------------
-   AutoClip — darkroom edit-suite
+   HustlClip — darkroom edit-suite
 
    The room this tool lives in is a darkroom: warm charcoal, one sodium-vapour
    accent, hairline rules instead of cards. Neutrals are tinted toward the
@@ -44,6 +44,9 @@
   --color-ink-800: oklch(0.208 0.013 55);
   --color-ink-700: oklch(0.262 0.014 55);
   --color-ink-600: oklch(0.335 0.014 55);
+  /* Secondary text. Referenced throughout the UI but previously undefined, so
+     every "quiet" caption silently rendered at full brightness. */
+  --color-ink-500: oklch(0.47 0.013 57);
   --color-ink-400: oklch(0.545 0.013 58);
   --color-ink-300: oklch(0.678 0.012 60);
   --color-ink-200: oklch(0.812 0.010 62);

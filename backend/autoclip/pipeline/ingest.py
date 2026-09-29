@@ -63,6 +63,32 @@ def is_youtube_url(url: str) -> bool:
     return host in _YOUTUBE_HOSTS
 
 
+def is_supported_url(url: str) -> bool:
+    """A public http(s) link yt-dlp may be asked to fetch.
+
+    Loopback, private, link-local and ``.local`` hosts are refused, so a remote
+    caller cannot use the server to reach its own network. Hostnames are not
+    resolved here; the check is a guard for the obvious cases, not a firewall.
+    """
+    import ipaddress
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(url.strip())
+        host = (parsed.hostname or "").lower()
+    except ValueError:
+        return False
+    if parsed.scheme not in ("http", "https") or not host:
+        return False
+    if host == "localhost" or host.endswith((".localhost", ".local", ".internal")):
+        return False
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return "." in host
+    return address.is_global
+
+
 def slugify(text: str, *, max_length: int = 60) -> str:
     """Turn a title into a filesystem- and URL-safe slug."""
     slug = re.sub(r"[^\w\s-]", "", text, flags=re.UNICODE).strip().lower()
@@ -139,7 +165,9 @@ def ingest_youtube(
 
     return Source(
         id=source_id,
-        type="youtube",
+        # The schema knows two origins. A non-YouTube link is recorded as a
+        # fetched file, with its URL kept for provenance.
+        type="youtube" if is_youtube_url(url) else "upload",
         url=url,
         path=str(downloaded),
         filename=downloaded.name,
@@ -193,7 +221,7 @@ def _translate_ytdlp_error(exc: Exception, settings: IngestSettings) -> IngestEr
         "yt-dlp could not download this video.",
         hint=(
             "YouTube changes frequently and yt-dlp is updated often. Try "
-            "`autoclip update-ytdlp` to pull the latest version.\n\n"
+            "`hustlclip update-ytdlp` to pull the latest version.\n\n"
             f"Original error: {exc}"
         ),
     )

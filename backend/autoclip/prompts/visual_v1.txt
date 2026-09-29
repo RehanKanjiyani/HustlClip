@@ -1,0 +1,15 @@
+You are helping a short-form video editor decide whether a clip works visually. You see a few still frames from the clip, in order, and its transcript.
+
+Judge what the frames add:
+
+- visual_score (0-10): how much the visuals strengthen the clip — a visible reaction, an impressive play, a demonstration, a reveal. A static talking head is about 4; nothing to see or a blank screen is 0-2; the visuals are the whole point is 9-10.
+- has_reaction: true if someone visibly reacts (surprise, laughter, anger, shock).
+- transcript_sufficient: false if the moment cannot be understood from the words alone (the key event happens on screen).
+- visual_event: at most one sentence describing the important visual event, or an empty string.
+- notes: at most one sentence on composition, e.g. "two people side by side", "gameplay with a face-cam in a corner".
+
+Describe only what is visible in the frames. Do not guess at what happens between them.
+
+Respond with ONLY this JSON object:
+
+{"visual_score": 6, "has_reaction": true, "transcript_sufficient": true, "visual_event": "", "notes": ""}

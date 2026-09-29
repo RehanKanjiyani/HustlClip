@@ -1,4 +1,4 @@
-"""AutoClip — open-source, local-first AI video clipper."""
+"""HustlClip (package ``autoclip``) — AI-assisted short-form video clipper."""
 
 __version__ = "0.1.0.dev0"
 

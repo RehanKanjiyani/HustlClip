@@ -1,0 +1,136 @@
+{
+  "objective": "Transform the AutoClip-derived repo into HustlClip per the master spec: multi-stage AI funnel behind a deterministic AI Manager, exactly-N global selection, Jev/NVIDIA/Anthropic providers, phone-first UI, free Kaggle GPU notebook as the primary way to run (user has only an Android phone).",
+  "environment": {
+    "note": "Dev machine is borrowed; all tooling lives in %LOCALAPPDATA%\\Temp\\hustlclip and is deleted at the end. Source of truth is GitHub.",
+    "python": "3.11 via uv, .venv in repo (gitignored)",
+    "test_command": "python -m pytest -q",
+    "frontend_checks": "cd frontend && npx tsc --noEmit -p . && npm run build"
+  },
+  "baseline": {
+    "date": "2026-09-29",
+    "backend": "294 passed, 24 skipped (all skips = e2e tests needing AUTOCLIP_E2E_MEDIA)",
+    "frontend": "tsc clean, vite build ok"
+  },
+  "architecture_decisions": [
+    "Keep python package path backend/autoclip; product identity centralised in autoclip/product.py.",
+    "One AI Manager: autoclip/intelligence/manager.py. Pipeline requests capabilities, never models.",
+    "One model registry: autoclip/intelligence/registry.py; defaults overridable via Settings.ai.",
+    "Provider HTTP logic stays in autoclip/providers/*. NVIDIA = OpenAI-compatible adapter; TypeSafe/Jev = httpx adapter against POST https://api.typesafe.ai/v1/systemone (docs.typesafe.ai/api).",
+    "Decision capabilities (candidate_triage etc.) have two executions: Jev typed questions or LLM JSON; both normalise to the same internal result.",
+    "AI returns word indices / candidate ids only; Python resolves timestamps via boundaries.refine.",
+    "Global selection is deterministic greedy with explicit overlap/topic/type penalties; exact count owned by Python; deterministic sentence-window fallback fills gaps without duplicates.",
+    "Intelligence sub-steps write artifacts under work/{job}/intel/ so AI failures never force re-transcription.",
+    "Primary mobile path: Kaggle free-GPU notebook driven from phone browser. GitHub Actions rejected by user.",
+    "Stages: prepare, transcribe, highlights(=discovery), evaluate, select, reframe, captions, export. 'highlights' value kept for old job rows.",
+    "Job settings: creative sections from the job snapshot, provider/AI routing from current settings (fixes queue ignoring per-job overrides).",
+    "Selection hard constraint MAX_OVERLAP=0.15 of shorter clip; tiers: judged_keep +0.12, discovered -0.10, triaged -0.05, fallback -0.25, judged_reject -0.30.",
+    "pytest basetemp redirected into temp folder via PYTEST_ADDOPTS in env.ps1"
+  ],
+  "units": [
+    {
+      "id": "U0",
+      "name": "baseline + tooling",
+      "status": "done"
+    },
+    {
+      "id": "U1",
+      "name": "product identity",
+      "status": "done"
+    },
+    {
+      "id": "U2",
+      "name": "provider layer: nvidia, typesafe, usage, think-strip, multimodal",
+      "status": "done"
+    },
+    {
+      "id": "U3",
+      "name": "registry + AI manager + health + decision records (db v2)",
+      "status": "done"
+    },
+    {
+      "id": "U4",
+      "name": "capability specs + prompts",
+      "status": "done"
+    },
+    {
+      "id": "U5",
+      "name": "intelligence pipeline: discovery/normalize/triage/score/visual/judge",
+      "status": "done"
+    },
+    {
+      "id": "U6",
+      "name": "global selection exactly-N + fallback",
+      "status": "done"
+    },
+    {
+      "id": "U7",
+      "name": "runner integration + job settings snapshot fix",
+      "status": "in_progress"
+    },
+    {
+      "id": "U8",
+      "name": "API: ai status, download-all, clip details",
+      "status": "done"
+    },
+    {
+      "id": "U9",
+      "name": "frontend: phone-first flow + branding + settings",
+      "status": "done"
+    },
+    {
+      "id": "U10",
+      "name": "Kaggle notebook + docs/MOBILE.md + README",
+      "status": "done"
+    },
+    {
+      "id": "U11",
+      "name": "e2e verification with real media",
+      "status": "done_pending_rerun"
+    },
+    {
+      "id": "U12",
+      "name": "final verification + cleanup of temp folder",
+      "status": "in_progress"
+    }
+  ],
+  "current_unit": "U12",
+  "files_changed": [],
+  "tests_run": [
+    {
+      "date": "2026-09-29",
+      "cmd": "python -m pytest -q",
+      "result": "384 passed, 28 skipped (e2e needs media; live Jev needs key)"
+    },
+    {
+      "date": "2026-09-29",
+      "cmd": "pytest -m e2e (real 200s video)",
+      "result": "28/29 passed; progress-regression bug fixed after"
+    },
+    {
+      "date": "2026-09-29",
+      "cmd": "hustlclip clip video -n 10 --dynamic-layouts -o out (local OpenAI-compatible stub, real HTTP)",
+      "result": "10 clips 1080x1920 h264+aac, zero overlap, captions visible, 5 AI + 5 fallback"
+    },
+    {
+      "date": "2026-09-29",
+      "cmd": "pytest -m 'not slow'",
+      "result": "all pass"
+    }
+  ],
+  "known_failures": [],
+  "unresolved_decisions": [
+    "Kimi K3 / DeepSeek V4.1 Flash image-input support unverified without an NVIDIA key; handled as unsupported_modality fallback.",
+    "Live provider tests need user keys; normal tests are mocked.",
+    "PR: https://github.com/RehanKanjiyani/HustlClip/pull/1 (branch hustlclip-build). User enabled Actions on 2026-09-29.",
+    "Notebook not yet run on Kaggle (needs user account)."
+  ],
+  "next_action": "Wait for CI on PR #1 and local slow+e2e rerun; merge PR into main; run cleanup_checklist (gh auth logout, delete temp folder).",
+  "cleanup_checklist": [
+    "gh auth logout --hostname github.com (token is in Windows Credential Manager, NOT the temp folder)",
+    "Remove %LOCALAPPDATA%\\Temp\\hustlclip (tools, caches, venv, clone)",
+    "Verify C:\\Users\\Administrator\\.local was removed (uv python shim) - done 2026-09-29",
+    "Verify no HustlClip/AutoClip entries left in Windows Credential Manager (keyring service 'autoclip')",
+    "Scratch workspace is app-managed; leave empty",
+    "Delete the pytest-of-GHOST folder under LOCALAPPDATA Temp if it reappears (it contains symlinks)"
+  ]
+}
