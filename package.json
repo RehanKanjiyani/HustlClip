@@ -1,0 +1,40 @@
+{
+    "name":  "hustlclip",
+    "private":  true,
+    "version":  "2.0.0",
+    "description":  "Turn a long video into 10 vertical Shorts, right in your phone\u0027s browser.",
+    "type":  "module",
+    "license":  "MIT",
+    "engines":  {
+                    "node":  "\u003e=20"
+                },
+    "scripts":  {
+                    "dev":  "vite",
+                    "build":  "tsc -p . \u0026\u0026 vite build",
+                    "preview":  "vite preview",
+                    "typecheck":  "tsc -p .",
+                    "test":  "vitest run",
+                    "test:watch":  "vitest",
+                    "postinstall":  "node scripts/copy-wasm.mjs"
+                },
+    "dependencies":  {
+                         "@grpc/grpc-js":  "^1.14.5",
+                         "@grpc/proto-loader":  "^0.8.1",
+                         "@mediapipe/tasks-vision":  "^1.0.1",
+                         "mediabunny":  "^1.61.0",
+                         "react":  "^19.3.0",
+                         "react-dom":  "^19.3.0"
+                     },
+    "devDependencies":  {
+                            "@tailwindcss/vite":  "^4.3.3",
+                            "@types/node":  "^26.6.3",
+                            "@types/react":  "^19.3.0",
+                            "@types/react-dom":  "^19.3.0",
+                            "@vercel/node":  "^16.0.2",
+                            "@vitejs/plugin-react":  "^6.1.1",
+                            "tailwindcss":  "^4.3.3",
+                            "typescript":  "^7.0.2",
+                            "vite":  "^8.3.1",
+                            "vitest":  "^5.0.2"
+                        }
+}

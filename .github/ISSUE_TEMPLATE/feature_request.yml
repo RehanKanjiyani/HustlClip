@@ -1,13 +1,11 @@
 name: Feature request
-description: Suggest something AutoClip should do
+description: Suggest something HustlClip should do
 labels: [enhancement]
 body:
   - type: markdown
     attributes:
       value: |
-        Before writing: the [non-goals](https://github.com/artbyjazi/autoclip#non-goals)
-        are deliberate. Direct posting to platforms and a full timeline editor are
-        both out of scope on purpose, not oversights.
+        Thanks! Describe what you'd like and why it matters for your clips.
 
   - type: textarea
     id: problem
