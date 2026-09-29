@@ -24,6 +24,7 @@ No server, no notebook, no desktop. Hosting is Vercel's free plan; the AI is NVI
 | Phone browser | Decoding, audio extraction, silence detection, face detection (MediaPipe), layout planning, caption drawing, H.264 encoding (WebCodecs via [Mediabunny](https://mediabunny.dev)), job storage (IndexedDB + OPFS), resume |
 | Vercel functions (`api/`) | Password gate, and a thin proxy that holds the API keys: `/api/transcribe` (NVIDIA Riva ASR over gRPC), `/api/chat` (registry models only) |
 | NVIDIA cloud | Parakeet TDT / CTC (English, word timings), Whisper large v3 (multilingual), and LLMs (Nemotron 3 Super, DeepSeek V4.1 Flash, GPT-OSS, Kimi K3, GLM) |
+| Optional keys | Gemini (`GEMINI_API_KEY`), OpenAI (`OPENAI_API_KEY`) and Claude (`ANTHROPIC_API_KEY`) join the same routing with fallback |
 
 Key design rules, kept from the original app:
 

@@ -12,7 +12,9 @@
  * deliberately short so a stuck model costs one timeout, not the whole job.
  */
 
-export type ProviderId = 'nvidia' | 'anthropic'
+export type ProviderId = 'nvidia' | 'anthropic' | 'gemini' | 'openai'
+
+export const PROVIDERS: readonly ProviderId[] = ['nvidia', 'anthropic', 'gemini', 'openai']
 
 export type Capability =
   | 'candidate_discovery'
@@ -148,6 +150,43 @@ export const MODELS: readonly ModelEntry[] = [
     maxOutputTokens: 8192,
     firstByteTimeoutS: 60,
     timeoutS: 240,
+    temperature: false,
+  },
+  {
+    // Only present when GEMINI_API_KEY is set. Fast, with a free tier: a strong
+    // partner for NVIDIA on the high-volume steps. GEMINI_MODEL overrides the name.
+    id: 'gemini/flash',
+    provider: 'gemini',
+    apiModel: 'gemini-flash-latest',
+    label: 'Gemini Flash',
+    priority: {
+      candidate_discovery: 15,
+      candidate_triage: 15,
+      text_scoring: 15,
+      final_judgment: 15,
+      duplicate_risk: 15,
+    },
+    maxOutputTokens: 8192,
+    firstByteTimeoutS: 60,
+    timeoutS: 200,
+    temperature: true,
+  },
+  {
+    // Only present when OPENAI_API_KEY is set. OPENAI_MODEL overrides the name.
+    id: 'openai/mini',
+    provider: 'openai',
+    apiModel: 'gpt-5.4-mini',
+    label: 'GPT-5.4 mini',
+    priority: {
+      candidate_discovery: 25,
+      candidate_triage: 25,
+      text_scoring: 12,
+      final_judgment: 5,
+      duplicate_risk: 25,
+    },
+    maxOutputTokens: 8192,
+    firstByteTimeoutS: 60,
+    timeoutS: 200,
     temperature: false,
   },
 ]

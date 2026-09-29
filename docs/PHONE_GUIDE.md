@@ -109,6 +109,24 @@ open-source downloader that does this on the phone.
 | Phone gets warm | Normal while making clips. Take it out of its case; keep it plugged in for long videos. |
 | Not enough space | Each finished clip is ~30–60 MB. Delete old jobs in HustlClip, and delete the downloaded stream in Seal when done. |
 
+## Optional: more AI keys (Gemini, OpenAI, Claude)
+
+NVIDIA alone is enough. Extra keys make HustlClip faster when NVIDIA's free models are busy, and can improve the final
+pick. Add any of these in Vercel → your project → **Settings → Environment Variables**, then
+**Deployments → ⋯ → Redeploy**:
+
+| Name | Where to get it | What HustlClip uses it for |
+|---|---|---|
+| `GEMINI_API_KEY` | aistudio.google.com → **Get API key** (has a free tier) | Shares every AI step with NVIDIA, so jobs finish sooner |
+| `OPENAI_API_KEY` | platform.openai.com → **API keys** (paid) | Helps score moments; second choice for the final pick |
+| `ANTHROPIC_API_KEY` | console.anthropic.com → **API Keys** (paid) | Makes the final pick of the best clips |
+
+If a key fails or runs out of credit, HustlClip quietly uses the others. Only transcript text is sent to these
+services, never your video.
+
+Optional model names (only if a provider retires the default): `GEMINI_MODEL` (default `gemini-flash-latest`),
+`OPENAI_MODEL` (default `gpt-5.4-mini`), `ANTHROPIC_MODEL` (default `claude-opus-5`).
+
 ## Changing things later
 
 - **New key or password:** Vercel → project → **Settings → Environment Variables** → edit → **Save**, then

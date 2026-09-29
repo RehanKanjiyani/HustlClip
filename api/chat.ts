@@ -1,7 +1,7 @@
 import { findModel } from '../shared/models.js'
 import { requireAuth, requireSameOrigin } from './_lib/auth.js'
 import { HttpError, handle, json, readJson } from './_lib/http.js'
-import { requireKey } from './_lib/keys.js'
+import { modelOverride, requireKey } from './_lib/keys.js'
 import { generate } from './_lib/llm.js'
 
 interface ChatBody {
@@ -41,6 +41,7 @@ export const POST = handle(async (request) => {
 
   const key = requireKey(entry.provider)
   const started = Date.now()
-  const result = await generate(entry, { system: body.system, user: body.user, maxTokens, temperature }, key)
+  const model = { ...entry, apiModel: modelOverride(entry.provider) ?? entry.apiModel }
+  const result = await generate(model, { system: body.system, user: body.user, maxTokens, temperature }, key)
   return json({ ...result, latencyMs: Date.now() - started })
 })

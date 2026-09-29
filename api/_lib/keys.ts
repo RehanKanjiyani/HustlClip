@@ -10,6 +10,20 @@ import { HttpError, env } from './http.js'
 const KEY_NAMES: Record<ProviderId, string> = {
   nvidia: 'NVIDIA_API_KEY',
   anthropic: 'ANTHROPIC_API_KEY',
+  gemini: 'GEMINI_API_KEY',
+  openai: 'OPENAI_API_KEY',
+}
+
+/** Optional per-provider model overrides, so a newer model needs no code change. */
+const MODEL_OVERRIDES: Partial<Record<ProviderId, string>> = {
+  gemini: 'GEMINI_MODEL',
+  openai: 'OPENAI_MODEL',
+  anthropic: 'ANTHROPIC_MODEL',
+}
+
+export function modelOverride(provider: ProviderId): string | undefined {
+  const name = MODEL_OVERRIDES[provider]
+  return name ? env(name) : undefined
 }
 
 export function providerKey(provider: ProviderId): string | undefined {

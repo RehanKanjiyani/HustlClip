@@ -28,8 +28,32 @@ export interface Generation {
 
 export type Fetch = typeof fetch
 
-const NVIDIA_URL = 'https://integrate.api.nvidia.com/v1/chat/completions'
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
+
+/** Providers that speak the OpenAI chat-completions protocol, and their quirks. */
+interface Dialect {
+  name: string
+  url: string
+  /** OpenAI's current models take max_completion_tokens; others take max_tokens. */
+  maxTokensField: 'max_tokens' | 'max_completion_tokens'
+  extra?: Record<string, unknown>
+}
+
+export const DIALECTS: Record<'nvidia' | 'gemini' | 'openai', Dialect> = {
+  nvidia: { name: 'NVIDIA', url: 'https://integrate.api.nvidia.com/v1/chat/completions', maxTokensField: 'max_tokens' },
+  gemini: {
+    name: 'Gemini',
+    url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+    maxTokensField: 'max_tokens',
+    extra: { reasoning_effort: 'low' },
+  },
+  openai: {
+    name: 'OpenAI',
+    url: 'https://api.openai.com/v1/chat/completions',
+    maxTokensField: 'max_completion_tokens',
+    extra: { reasoning_effort: 'low' },
+  },
+}
 
 export async function generate(
   entry: ModelEntry,
@@ -37,15 +61,21 @@ export async function generate(
   apiKey: string,
   fetchImpl: Fetch = fetch,
 ): Promise<Generation> {
-  if (entry.provider === 'nvidia') return nvidia(entry, request, apiKey, fetchImpl)
-  return anthropic(entry, request, apiKey, fetchImpl)
+  if (entry.provider === 'anthropic') return anthropic(entry, request, apiKey, fetchImpl)
+  return openaiCompatible(DIALECTS[entry.provider], entry, request, apiKey, fetchImpl)
 }
 
 // ---------------------------------------------------------------------------
-// NVIDIA (OpenAI-compatible, streamed)
+// OpenAI-compatible providers (NVIDIA, Gemini, OpenAI), streamed
 // ---------------------------------------------------------------------------
 
-async function nvidia(entry: ModelEntry, request: GenerateRequest, apiKey: string, fetchImpl: Fetch) {
+async function openaiCompatible(
+  dialect: Dialect,
+  entry: ModelEntry,
+  request: GenerateRequest,
+  apiKey: string,
+  fetchImpl: Fetch,
+) {
   const controller = new AbortController()
   const hardTimer = setTimeout(() => controller.abort('timeout'), entry.timeoutS * 1000)
   let idleTimer = setTimeout(() => controller.abort('first-byte'), entry.firstByteTimeoutS * 1000)
@@ -62,15 +92,16 @@ async function nvidia(entry: ModelEntry, request: GenerateRequest, apiKey: strin
         { role: 'system', content: request.system },
         { role: 'user', content: request.user },
       ],
-      max_tokens: Math.min(request.maxTokens, entry.maxOutputTokens),
+      [dialect.maxTokensField]: Math.min(request.maxTokens, entry.maxOutputTokens),
       stream: true,
       stream_options: { include_usage: true },
+      ...dialect.extra,
     }
     if (entry.temperature && request.temperature !== null) body.temperature = request.temperature
 
     let response: Response
     try {
-      response = await fetchImpl(NVIDIA_URL, {
+      response = await fetchImpl(dialect.url, {
         method: 'POST',
         headers: {
           authorization: `Bearer ${apiKey}`,
@@ -83,7 +114,7 @@ async function nvidia(entry: ModelEntry, request: GenerateRequest, apiKey: strin
     } catch (error) {
       throw abortError(controller, error)
     }
-    if (!response.ok) throw await statusError(response, 'NVIDIA')
+    if (!response.ok) throw await statusError(response, dialect.name)
     touch()
 
     let text = ''
