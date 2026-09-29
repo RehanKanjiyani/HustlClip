@@ -109,6 +109,36 @@ describe('chat endpoint', () => {
     expect(String((fetchMock.mock.calls[0]![1]!.headers as Record<string, string>).authorization)).toBe('Bearer nvapi-test-not-real')
   })
 
+  it('calls OpenAI and Gemini with their own dialects and honours model overrides', async () => {
+    process.env.OPENAI_API_KEY = 'sk-test-not-real'
+    process.env.GEMINI_API_KEY = 'gm-test-not-real'
+    process.env.OPENAI_MODEL = 'gpt-test-override'
+    try {
+      const cookie = await signIn()
+      const stream = 'data: {"choices":[{"delta":{"content":"{}"},"finish_reason":"stop"}]}\ndata: [DONE]\n'
+      const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(stream, { status: 200 }))
+      for (const model of ['openai/mini', 'gemini/flash']) {
+        const response = await chat(
+          req('/api/chat', { method: 'POST', cookie, body: JSON.stringify({ model, system: 's', user: 'u', maxTokens: 1000 }) }),
+        )
+        expect(response.status).toBe(200)
+      }
+      const [openaiCall, geminiCall] = fetchMock.mock.calls
+      expect(String(openaiCall![0])).toBe('https://api.openai.com/v1/chat/completions')
+      const openaiBody = JSON.parse(String(openaiCall![1]!.body))
+      expect(openaiBody).toMatchObject({ model: 'gpt-test-override', max_completion_tokens: 1000 })
+      expect(openaiBody.max_tokens).toBeUndefined()
+      expect(String(geminiCall![0])).toContain('generativelanguage.googleapis.com/v1beta/openai/chat/completions')
+      const geminiBody = JSON.parse(String(geminiCall![1]!.body))
+      expect(geminiBody).toMatchObject({ model: 'gemini-flash-latest', max_tokens: 1000 })
+      expect(String((geminiCall![1]!.headers as Record<string, string>).authorization)).toBe('Bearer gm-test-not-real')
+    } finally {
+      delete process.env.OPENAI_API_KEY
+      delete process.env.GEMINI_API_KEY
+      delete process.env.OPENAI_MODEL
+    }
+  })
+
   it('classifies provider errors', async () => {
     expect((await statusError(new Response('', { status: 429, headers: { 'retry-after': '7' } }), 'NVIDIA')).category).toBe('rate_limit')
     expect((await statusError(new Response('', { status: 401 }), 'NVIDIA')).category).toBe('provider_auth')

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 
-import type { ProviderId } from '../../shared/models'
+import { PROVIDERS, type ProviderId } from '../../shared/models'
 import { type Status, api } from '../lib/api'
 import { persistStorage } from '../lib/store'
 import { Gate } from './Gate'
@@ -49,7 +49,7 @@ export function App() {
   }, [refresh])
 
   const ready = status?.passwordSet && status.signedIn
-  const providers = (status?.providers ?? []).filter((p): p is ProviderId => p === 'nvidia' || p === 'anthropic')
+  const providers = (status?.providers ?? []).filter((p): p is ProviderId => (PROVIDERS as readonly string[]).includes(p))
 
   return (
     <div className="mx-auto min-h-dvh max-w-xl px-4 pb-16 pt-[max(1rem,env(safe-area-inset-top))]">
