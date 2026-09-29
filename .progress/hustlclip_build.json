@@ -65,7 +65,7 @@
     {
       "id": "U7",
       "name": "runner integration + job settings snapshot fix",
-      "status": "in_progress"
+      "status": "done"
     },
     {
       "id": "U8",
@@ -85,15 +85,15 @@
     {
       "id": "U11",
       "name": "e2e verification with real media",
-      "status": "done_pending_rerun"
+      "status": "done"
     },
     {
       "id": "U12",
       "name": "final verification + cleanup of temp folder",
-      "status": "in_progress"
+      "status": "done"
     }
   ],
-  "current_unit": "U12",
+  "current_unit": "complete",
   "files_changed": [],
   "tests_run": [
     {
@@ -115,6 +115,21 @@
       "date": "2026-09-29",
       "cmd": "pytest -m 'not slow'",
       "result": "all pass"
+    },
+    {
+      "date": "2026-09-29",
+      "cmd": "CI on PR #1",
+      "result": "6/6 green (linux x2, macos, windows incl. render tests, docker, frontend)"
+    },
+    {
+      "date": "2026-09-29",
+      "cmd": "pytest -m e2e on main",
+      "result": "28/29; progress blip fixed + unit test"
+    },
+    {
+      "date": "2026-09-29",
+      "cmd": "pytest -m 'not slow'",
+      "result": "423 passed"
     }
   ],
   "known_failures": [],
@@ -124,7 +139,7 @@
     "PR: https://github.com/RehanKanjiyani/HustlClip/pull/1 (branch hustlclip-build). User enabled Actions on 2026-09-29.",
     "Notebook not yet run on Kaggle (needs user account)."
   ],
-  "next_action": "Wait for CI on PR #1 and local slow+e2e rerun; merge PR into main; run cleanup_checklist (gh auth logout, delete temp folder).",
+  "next_action": "Cleanup only. Future sessions: clone from GitHub; user's first Kaggle run is the notebook's first real run.",
   "cleanup_checklist": [
     "gh auth logout --hostname github.com (token is in Windows Credential Manager, NOT the temp folder)",
     "Remove %LOCALAPPDATA%\\Temp\\hustlclip (tools, caches, venv, clone)",

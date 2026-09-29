@@ -58,7 +58,11 @@ Run on Windows 10, Python 3.11, CPU only, ffmpeg 9.0.2:
   MediaPipe reframing, dynamic composition, libass captions and encoding;
   exact configured count, distinct clips, correct dimensions/codec/audio,
   durations matching cuts, resume without re-transcribing, re-asking models or
-  re-rendering.
+  re-rendering. Final run on `main`: 28/29 passed; the one failure was
+  a 0.00007 backwards step of the overall progress bar during rendering (ffmpeg
+  progress overshooting a clip). Fixed by making overall progress monotonic,
+  pinned by `tests/test_runner_progress.py`; the full e2e was not re-run after
+  that one-line fix.
 - `hustlclip clip <video> -n 10 --dynamic-layouts -o out/` (the notebook's
   command) against a local OpenAI-compatible stub over real HTTP: 10 clips,
   1080×1920 H.264 + AAC, zero overlap between clips, captions visible, 5 AI

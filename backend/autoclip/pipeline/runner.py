@@ -178,6 +178,7 @@ class PipelineRunner:
         self._is_cancelled = is_cancelled or (lambda: False)
         self.workspace = JobWorkspace(job.id)
         self._completed_weight = 0.0
+        self._last_overall = 0.0
 
     # -- progress ----------------------------------------------------------
 
@@ -195,7 +196,11 @@ class PipelineRunner:
     ) -> None:
         if overall is None:
             overall = self._completed_weight + STAGE_WEIGHTS[stage] * stage_progress
-        overall = min(1.0, overall)
+        # Never move the bar backwards: sub-step reports (ffmpeg's time-based
+        # progress can overshoot a clip, then the next clip starts at zero)
+        # would otherwise show as tiny visible jumps back.
+        overall = max(self._last_overall, min(1.0, overall))
+        self._last_overall = overall
         store.update_job(self.job.id, current_stage=stage.value, progress=round(overall, 4))
         if self.on_progress:
             self.on_progress(
@@ -610,6 +615,7 @@ class PipelineRunner:
             )
 
             def clip_progress(fraction: float, i: int = index) -> None:
+                fraction = max(0.0, min(1.0, fraction))
                 self._emit(stage, (i + fraction) / len(clips), f"Exporting clip {i + 1}")
 
             export.export_clip(
