@@ -41,8 +41,14 @@ async function request<T>(path: string, init: RequestInit & { timeoutMs?: number
   }
   if (!response.ok) {
     const err = (body as { error?: { category?: string; message?: string; retryAfterS?: number | null } } | null)?.error
-    const category = (err?.category as TransportCategory | undefined) ?? (response.status === 504 ? 'timeout' : 'unavailable')
-    const message = err?.message ?? `Server error ${response.status}.`
+    // Errors from Vercel itself (not our code) arrive without a JSON body.
+    const platform: Record<number, [TransportCategory, string]> = {
+      413: ['too_large', 'The upload was too big for Vercel (over 4.5 MB). Please report this with "Show details".'],
+      504: ['timeout', 'The server took too long to answer.'],
+    }
+    const fallback: [TransportCategory, string] = platform[response.status] ?? ['unavailable', `Server error ${response.status}.`]
+    const category = (err?.category as TransportCategory | undefined) ?? fallback[0]
+    const message = err?.message ?? fallback[1]
     throw new TransportError(message, category, err?.retryAfterS ?? null)
   }
   return body as T

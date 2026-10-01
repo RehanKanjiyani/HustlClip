@@ -6,18 +6,15 @@
  * needs. While samples stream past, their loudness is measured every 20 ms;
  * that energy curve is where silences, and so clean cut points, come from.
  *
- * Chunks for upload are then cut from this small Opus file by remuxing
- * (copying packets), never by decoding the big video again.
+ * Pieces for upload are cut later by SpeechCutter, straight from the video.
  */
 
 import {
   ALL_FORMATS,
   BlobSource,
-  BufferSource,
   BufferTarget,
   Conversion,
   Input,
-  OGG,
   OggOutputFormat,
   Output,
   Quality,
@@ -164,26 +161,40 @@ export function planCuts(duration: number, silences: Silence[], targetS: number,
   return cuts
 }
 
-/** Cuts standalone Ogg files out of the speech Ogg by copying packets. */
-export class OggSlicer {
+/**
+ * Cuts speech-ready Ogg/Opus pieces straight from the original video.
+ *
+ * Remuxing pieces out of the whole-video Ogg looked cheaper, but an Ogg trim
+ * that doesn't start at 0 copies the entire file (seen on a 1 h 46 min
+ * stream: every piece after the first was the full 20 MB, which Vercel
+ * rejects with 413). Video containers seek reliably, so each piece is decoded
+ * from the source instead: only its own few minutes of sound.
+ */
+export class SpeechCutter {
   private readonly input: Input
 
-  constructor(ogg: Uint8Array) {
-    const exact =
-      ogg.byteOffset === 0 && ogg.byteLength === ogg.buffer.byteLength
-        ? (ogg.buffer as ArrayBuffer)
-        : (ogg.slice().buffer as ArrayBuffer)
-    this.input = new Input({ source: new BufferSource(exact), formats: [OGG] })
+  constructor(file: Blob) {
+    this.input = new Input({ source: new BlobSource(file), formats: ALL_FORMATS })
   }
 
-  async slice(start: number, end: number): Promise<Uint8Array> {
+  async cut(start: number, end: number): Promise<Uint8Array> {
     const output = new Output({ format: new OggOutputFormat({ maximumPageDuration: 1 }), target: new BufferTarget() })
     const conversion = await Conversion.init({
       input: this.input,
       output,
+      tracks: 'primary',
       trim: { start: Math.max(0, start), end },
+      video: { discard: true },
+      audio: {
+        numberOfChannels: 1,
+        sampleRate: SPEECH_RATE,
+        codec: 'opus',
+        quality: new Quality({ bitrate: BITRATE }),
+        forceTranscode: true,
+      },
       showWarnings: false,
     })
+    if (!conversion.isValid) throw new Error('The sound track of this video cannot be processed.')
     await conversion.execute()
     const buffer = (output.target as BufferTarget).buffer
     if (!buffer) throw new Error('Could not cut the audio.')

@@ -2,6 +2,16 @@
 
 Notable changes. Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 2.0.2: long videos, 2026-10-01
+
+### Fixed
+
+- **Long videos stopped at "Listening" with "Server error 413".** Cutting a speech piece out of the whole-video
+  Ogg copied the entire file whenever the piece didn't start at 0, so every piece after the first was the full
+  audio (20 MB for a 1 h 46 min stream) and Vercel refused it. Pieces are now cut straight from the video
+  (each is only its own minutes of sound), any piece still over 3.5 MB is split in half automatically, and a
+  platform 413 shows a clear message instead of "Server error 413". Jobs that already stopped can tap Resume.
+
 ## 2.0.0: HustlClip on the web, 2026-09-30
 
 HustlClip becomes a phone web app. The Python backend and the Kaggle notebook are gone (they remain in git history).
