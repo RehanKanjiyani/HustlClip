@@ -133,7 +133,7 @@ export class JobRunner {
         providers: this.providers,
         signal,
         onRecord: (r) => {
-          if (r.status !== 'success') this.log(`AI ${r.capability} via ${r.model}: ${r.status} ${r.category ?? ''}`)
+          if (r.status !== 'success') this.log(`AI ${r.capability} via ${r.model}: ${r.status} ${r.category ?? ''} ${r.detail.slice(0, 90)}`.trim())
         },
       })
       let clips = this.job.clips

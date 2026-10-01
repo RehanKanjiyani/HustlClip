@@ -50,6 +50,8 @@ Respond with ONLY this JSON object:
 
 \`initial_score\` is 0 to 1: your honest estimate of how well it would perform. Use the whole range.
 
+Keep it short: title under 8 words, hook under 15 words, reason under 15 words.
+
 \`start_word_index\` and \`end_word_index\` must be indices that appear in the section you were given.
 
 If nothing in the section is worth flagging, return {"content_type": "...", "candidates": []}. That is a correct answer.`,

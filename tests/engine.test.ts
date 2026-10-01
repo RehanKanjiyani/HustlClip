@@ -150,6 +150,18 @@ describe('candidates and selection', () => {
 })
 
 describe('capability parsing', () => {
+  it('keeps the complete moments from an answer that was cut off', () => {
+    const payload = { text: '', firstWord: 0, lastWord: 500, minS: 10, maxS: 60, maxCandidates: 8 }
+    const cut =
+      '{"content_type": "stream", "candidates": [' +
+      '{"start_word_index": 10, "end_word_index": 80, "type": "reaction", "initial_score": 0.8, "title": "A"},' +
+      '{"start_word_index": 120, "end_word_index": 200, "type": "punchline", "initial_score": 0.7, "title": "B"},' +
+      '{"start_word_index": 300, "end_word_index": 3'
+    const out = discovery.parse(cut, payload)
+    expect(out.candidates.map((c) => c.title)).toEqual(['A', 'B'])
+    expect(out.contentType).toBe('stream')
+  })
+
   it('extracts JSON after reasoning and fences', () => {
     expect(extractJsonObject('<think>{"no": 1}</think>Sure!\n```json\n{"a": [1, 2,]}\n```')).toEqual({ a: [1, 2] })
   })

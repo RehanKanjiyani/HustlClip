@@ -35,6 +35,38 @@ export function extractJsonObject(text: string): Record<string, unknown> {
   throw new Error('no JSON object found in the response')
 }
 
+/**
+ * Recovers the complete items of a JSON array from a reply that was cut off
+ * mid-way (a model hit its output limit). Finds `"key": [` for the first key
+ * present and returns every fully closed `{...}` element before the cut.
+ */
+export function salvageArray(text: string, keys: string[]): { key: string; items: Record<string, unknown>[] } | null {
+  const cleaned = stripReasoning(text)
+  for (const key of keys) {
+    const match = new RegExp(`"${key}"\\s*:\\s*\\[`).exec(cleaned)
+    if (!match) continue
+    const items: Record<string, unknown>[] = []
+    let pos = match.index + match[0].length
+    for (;;) {
+      const start = cleaned.indexOf('{', pos)
+      if (start < 0) break
+      const close = cleaned.indexOf(']', pos)
+      if (close >= 0 && close < start) break
+      const end = balancedEnd(cleaned, start)
+      if (end < 0) break
+      try {
+        const item = JSON.parse(cleaned.slice(start, end + 1))
+        if (item && typeof item === 'object' && !Array.isArray(item)) items.push(item as Record<string, unknown>)
+      } catch {
+        break
+      }
+      pos = end + 1
+    }
+    if (items.length) return { key, items }
+  }
+  return null
+}
+
 function balancedEnd(text: string, start: number): number {
   let depth = 0
   let inString = false

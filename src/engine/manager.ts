@@ -244,7 +244,7 @@ export class AIManager {
       throw new CapabilityUnavailable(spec.name, 'No AI model is configured. Add NVIDIA_API_KEY in Vercel.', 'not_configured')
     }
     const waitUntil = this.clock() + (this.options.maxWaitMs ?? 150_000)
-    const hedgeMs = this.options.hedgeMs ?? 25_000
+    const hedgeMs = this.options.hedgeMs ?? 12_000
     const state = { lastCategory: null as string | null, attempt: 0 }
 
     for (;;) {
@@ -350,7 +350,7 @@ export class AIManager {
         model: entry.id,
         system: systemPrompt(spec),
         user,
-        maxTokens: Math.min(entry.maxOutputTokens, spec.maxTokens(payload) + 2048),
+        maxTokens: Math.min(entry.maxOutputTokens, spec.maxTokens(payload) + 4096),
         temperature: spec.temperature,
       }, signal)
     } catch (error) {

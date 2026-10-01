@@ -36,9 +36,9 @@ import { type Pick, MAX_OVERLAP, compositeScore, explain, pairKey, select } from
 import type { Silence, Transcript } from './transcript'
 import { buildWindows, candidatesPerWindow } from './windows'
 
-const DISCOVERY_CONCURRENCY = 4
+const DISCOVERY_CONCURRENCY = 3
 const SCORING_BATCH = 6
-const SCORING_CONCURRENCY = 3
+const SCORING_CONCURRENCY = 2
 const TRIAGE_BATCH = 15
 const CONTEXT_WORDS = 45
 const JUDGE_TEXT_CHARS = 2400
