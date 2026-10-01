@@ -193,6 +193,8 @@ export class HealthTracker {
   }
 }
 
+const FREE_PROVIDERS = new Set<ProviderId>(['nvidia', 'gemini'])
+
 type Outcome<R> = { ok: true; output: R } | { ok: false; category: string; repair: string | null }
 type Settled<R> = { outcome: Outcome<R>; promise: Promise<Settled<R>>; entry: ModelEntry }
 
@@ -244,7 +246,7 @@ export class AIManager {
       throw new CapabilityUnavailable(spec.name, 'No AI model is configured. Add NVIDIA_API_KEY in Vercel.', 'not_configured')
     }
     const waitUntil = this.clock() + (this.options.maxWaitMs ?? 150_000)
-    const hedgeMs = this.options.hedgeMs ?? 12_000
+    const hedgeMs = this.options.hedgeMs ?? 20_000
     const state = { lastCategory: null as string | null, attempt: 0 }
 
     for (;;) {
@@ -286,7 +288,8 @@ export class AIManager {
         this.options.signal?.throwIfAborted()
         if (inflight.size === 0 && queue.length) start(queue.shift()!)
         const hedge =
-          queue.length && inflight.size < 2
+          // Duplicate requests only to free providers; never double-pay.
+          queue.length && inflight.size < 2 && FREE_PROVIDERS.has(queue[0]!.provider)
             ? new Promise<'hedge'>((resolve) => {
                 hedgeTimer = setTimeout(() => resolve('hedge'), hedgeMs)
               })

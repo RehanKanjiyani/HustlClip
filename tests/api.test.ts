@@ -130,7 +130,7 @@ describe('chat endpoint', () => {
       expect(openaiBody.max_tokens).toBeUndefined()
       expect(String(geminiCall![0])).toContain('generativelanguage.googleapis.com/v1beta/openai/chat/completions')
       const geminiBody = JSON.parse(String(geminiCall![1]!.body))
-      expect(geminiBody).toMatchObject({ model: 'gemini-flash-latest', max_tokens: 1000 })
+      expect(geminiBody).toMatchObject({ model: 'gemini-flash-lite-latest', max_tokens: 1000 })
       expect(String((geminiCall![1]!.headers as Record<string, string>).authorization)).toBe('Bearer gm-test-not-real')
     } finally {
       delete process.env.OPENAI_API_KEY

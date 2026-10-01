@@ -40,8 +40,10 @@ const DISCOVERY_CONCURRENCY = 3
 const SCORING_BATCH = 6
 const SCORING_CONCURRENCY = 2
 const TRIAGE_BATCH = 15
-const CONTEXT_WORDS = 45
-const JUDGE_TEXT_CHARS = 2400
+/** Sentences of context shown either side of a candidate when scoring. */
+const CONTEXT_SENTENCES = 2
+const JUDGE_HEAD_CHARS = 900
+const JUDGE_TAIL_CHARS = 400
 const MAX_DUPLICATE_PAIRS = 24
 
 export interface Store {
@@ -112,7 +114,7 @@ export class Funnel {
           const { output } = await this.o.manager.run(
             caps.discovery,
             {
-              text: transcript.tagged(window.firstWord, window.lastWord),
+              ...sentenceWindow(transcript, window.firstWord, window.lastWord),
               firstWord: window.firstWord,
               lastWord: window.lastWord,
               minS: this.o.limits.minS,
@@ -256,14 +258,18 @@ export class Funnel {
   }
 
   private scoringItem(c: Candidate): caps.ScoringItem {
-    const last = this.o.transcript.length - 1
-    const first = Math.max(0, c.startWord - CONTEXT_WORDS)
-    const final = Math.min(last, c.endWord + CONTEXT_WORDS)
+    const t = this.o.transcript
+    const sentences = t.sentences
+    const a = t.sentenceOf(c.startWord)
+    const b = t.sentenceOf(c.endWord)
+    const first = Math.max(0, a - CONTEXT_SENTENCES)
+    const final = Math.min(sentences.length - 1, b + CONTEXT_SENTENCES)
     return {
       id: c.id,
-      taggedText: this.o.transcript.tagged(first, final),
-      candidateFirst: c.startWord,
-      candidateLast: c.endWord,
+      taggedText: t.taggedSentences(first, final),
+      sentences,
+      candidateFirst: a,
+      candidateLast: b,
       contextFirst: first,
       contextLast: final,
       durationS: duration(c),
@@ -326,7 +332,7 @@ export class Funnel {
               momentType: c.momentType,
               topic: c.scores?.topic ?? '',
               midScore: compositeScore(c) * 100,
-              text: textOf(this.o.transcript, c).slice(0, JUDGE_TEXT_CHARS),
+              text: headAndTail(textOf(this.o.transcript, c)),
             })),
             target: this.o.target,
             contentType,
@@ -416,6 +422,23 @@ export class Funnel {
   }
 }
 
+/** The sentence-tagged text for a window of words, and the sentence table. */
+function sentenceWindow(transcript: Transcript, firstWord: number, lastWord: number) {
+  const firstSentence = transcript.sentenceOf(firstWord)
+  const lastSentence = transcript.sentenceOf(lastWord)
+  return {
+    text: transcript.taggedSentences(firstSentence, lastSentence),
+    sentences: transcript.sentences,
+    firstSentence,
+    lastSentence,
+  }
+}
+
+/** A moment's opening and ending: what decides whether it works, at a fraction of the tokens. */
+function headAndTail(text: string): string {
+  if (text.length <= JUDGE_HEAD_CHARS + JUDGE_TAIL_CHARS + 20) return text
+  return ` … `
+}
 function majorityContentType(results: caps.DiscoveryResult[]): caps.ContentType {
   const votes = new Map<caps.ContentType, number>()
   for (const r of results) votes.set(r.contentType, (votes.get(r.contentType) ?? 0) + 1)

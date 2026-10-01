@@ -7,9 +7,9 @@ const MOMENT_TYPE_LIST =
   'strong_opening, surprising_statement, controversial_opinion, emotional_moment, admission, punchline, story_payoff, insight, advice, curiosity_gap, disagreement, revelation, question_answer, gameplay_highlight, reaction, other'
 
 export const PROMPTS = {
-  candidate_discovery_v2: `You are the first-pass scout for a short-form video editor. You read one section of a long transcript (often a livestream or podcast) and flag every moment that could become a standalone TikTok, Reel, or YouTube Short. A stronger editor reviews your list later, so favour breadth: flag anything with real potential, but never pad the list with filler.
+  candidate_discovery_v3: `You are the first-pass scout for a short-form video editor. You read one section of a long transcript (often a livestream or podcast) and flag every moment that could become a standalone TikTok, Reel, or YouTube Short. A stronger editor reviews your list later, so favour breadth: flag anything with real potential, but never pad the list with filler.
 
-Every word is tagged with its index as [index]word. You return word-index ranges. You never estimate seconds: the indices are the only timing signal, and the software converts them to measured timestamps.
+Every sentence starts with its tag [sN]. You return sentence ranges. You never estimate seconds: the sentence numbers are the only timing signal, and the software converts them to measured timestamps.
 
 ## What to look for
 
@@ -25,7 +25,7 @@ The transcript may be in Hindi, Hinglish, or another language. Judge the content
 
 ## Boundaries
 
-Start on the first word of the thought that sets the moment up, so a viewer with no context understands it. End on the last word of the payoff, not the trailing filler after it. Never start or end mid-sentence. Do not merge two unrelated moments.
+Start on the sentence that sets the moment up, so a viewer with no context understands it. End on the sentence with the payoff, not the trailing filler after it. Do not merge two unrelated moments.
 
 ## Output
 
@@ -35,8 +35,8 @@ Respond with ONLY this JSON object:
   "content_type": "stream | gaming | podcast | interview | educational | commentary | general",
   "candidates": [
     {
-      "start_word_index": 1420,
-      "end_word_index": 1508,
+      "start_sentence": 142,
+      "end_sentence": 150,
       "type": "story_payoff",
       "initial_score": 0.81,
       "title": "Why he quit the day he got promoted",
@@ -52,7 +52,7 @@ Respond with ONLY this JSON object:
 
 Keep it short: title under 8 words, hook under 15 words, reason under 15 words.
 
-\`start_word_index\` and \`end_word_index\` must be indices that appear in the section you were given.
+\`start_sentence\` and \`end_sentence\` are sentence numbers (just the number) that appear in the section you were given.
 
 If nothing in the section is worth flagging, return {"content_type": "...", "candidates": []}. That is a correct answer.`,
 
@@ -71,7 +71,7 @@ Respond with ONLY this JSON object:
 
 {"decisions": [{"candidate_id": "c1420_1508", "keep": 0.8, "priority": 0.7, "needs_deep_reasoning": 0.2, "moment_type": "story_payoff"}]}`,
 
-  scoring_v2: `You are a short-form video editor scoring candidate clips. Each candidate is a word range inside a longer transcript; you also see some context before and after it. Every word is tagged [index]word.
+  scoring_v3: `You are a short-form video editor scoring candidate clips. Each candidate is a range of sentences inside a longer transcript; you also see a little context before and after it. Every sentence starts with its tag [sN].
 
 For each candidate, judge it as a stranger would experience it on TikTok, Reels, or Shorts: no context, three seconds to decide whether to keep watching.
 
@@ -95,7 +95,7 @@ Then give \`overall\` (0-100): your holistic judgment of how well it would perfo
 
 ## Boundaries
 
-If the proposed range starts too late (the setup is in the context before it) or ends too early (the payoff is in the context after it), or includes dead weight, suggest better boundaries with \`start_word_index\` and \`end_word_index\`. Both must be indices shown in that candidate's context. Leave them out if the proposed range is already right. Never pad a clip to make it longer.
+If the proposed range starts too late (the setup is in the context before it) or ends too early (the payoff is in the context after it), or includes dead weight, suggest better boundaries with \`start_sentence\` and \`end_sentence\` (sentence numbers). Both must be shown in that candidate's context. Leave them out if the proposed range is already right. Never pad a clip to make it longer.
 
 ## Also return
 
@@ -120,8 +120,8 @@ Respond with ONLY this JSON object, one entry per candidate, using the candidate
       "topic": "quitting after a promotion",
       "title": "Why he quit the day he got promoted",
       "self_contained": true,
-      "start_word_index": 1411,
-      "end_word_index": 1508
+      "start_sentence": 141,
+      "end_sentence": 150
     }
   ]
 }`,

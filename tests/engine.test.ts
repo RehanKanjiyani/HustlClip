@@ -150,8 +150,19 @@ describe('candidates and selection', () => {
 })
 
 describe('capability parsing', () => {
-  it('keeps the complete moments from an answer that was cut off', () => {
-    const payload = { text: '', firstWord: 0, lastWord: 500, minS: 10, maxS: 60, maxCandidates: 8 }
+  it('maps sentence numbers back to measured word ranges', () => {
+    const t = new Transcript(talk(10))
+    expect(t.sentences).toHaveLength(10)
+    expect(t.sentenceOf(17)).toBe(2)
+    expect(t.taggedSentences(0, 1)).toBe('[s0] w0_0 w0_1 w0_2 w0_3 w0_4 w0_5 w0_6 w0_7.\n[s1] w1_0 w1_1 w1_2 w1_3 w1_4 w1_5 w1_6 w1_7.')
+    const payload = { text: '', firstWord: 8, lastWord: 79, firstSentence: 1, lastSentence: 9, sentences: t.sentences, minS: 10, maxS: 60, maxCandidates: 8 }
+    const out = discovery.parse('{"candidates":[{"start_sentence":"s2","end_sentence":4,"type":"insight"},{"start_sentence":40,"end_sentence":50}]}', payload)
+    expect(out.candidates).toHaveLength(1)
+    expect(out.candidates[0]).toMatchObject({ startWord: 16, endWord: 39 })
+    expect(out.invalidReferences).toBe(1)
+  })
+
+  it('keeps the complete moments from an answer that was cut off', () => {    const payload = { text: '', firstWord: 0, lastWord: 500, minS: 10, maxS: 60, maxCandidates: 8 }
     const cut =
       '{"content_type": "stream", "candidates": [' +
       '{"start_word_index": 10, "end_word_index": 80, "type": "reaction", "initial_score": 0.8, "title": "A"},' +

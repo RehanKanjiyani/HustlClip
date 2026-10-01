@@ -12,6 +12,7 @@
 import type { Capability } from '../../shared/models'
 import { MOMENT_TYPES, type MomentType, type Scores, type Triage, type Verdict } from './candidates'
 import { extractJsonObject, salvageArray } from './json'
+import { sentenceRef } from './transcript'
 import { PROMPTS, type PromptName } from './prompts'
 
 export type CapabilityErrorCategory = 'malformed' | 'schema' | 'incomplete' | 'invalid_references'
@@ -147,6 +148,14 @@ export interface DiscoveryRequest {
   minS: number
   maxS: number
   maxCandidates: number
+  /**
+   * Sentence mode (the default): `text` is `[sN] sentence` lines for
+   * sentences firstSentence..lastSentence, and `sentences` maps a sentence
+   * number to its inclusive word range. Without it, `text` is word-tagged.
+   */
+  sentences?: readonly (readonly [number, number])[]
+  firstSentence?: number
+  lastSentence?: number
 }
 
 export interface DiscoveredCandidate {
@@ -167,11 +176,13 @@ export interface DiscoveryResult {
 
 export const discovery: CapabilitySpec<DiscoveryRequest, DiscoveryResult> = {
   name: 'candidate_discovery',
-  prompt: 'candidate_discovery_v2',
+  prompt: 'candidate_discovery_v3',
   temperature: 0.3,
-  maxTokens: (p) => 1200 + 260 * p.maxCandidates,
+  maxTokens: (p) => 1200 + 220 * p.maxCandidates,
   render: (p) =>
-    `Transcript section, words ${p.firstWord} to ${p.lastWord}. Each word is tagged [index]word.\n` +
+    (p.sentences
+      ? `Transcript section, sentences s${p.firstSentence} to s${p.lastSentence}. Each sentence starts with its tag [sN].\n`
+      : `Transcript section, words ${p.firstWord} to ${p.lastWord}. Each word is tagged [index]word.\n`) +
     `Target clip length: ${Math.round(p.minS)}-${Math.round(p.maxS)} s.\n` +
     `Return at most ${p.maxCandidates} candidates, strongest first.\n\n---\n${p.text}\n---`,
   parse: (reply, p) => {
@@ -187,8 +198,23 @@ export const discovery: CapabilitySpec<DiscoveryRequest, DiscoveryResult> = {
         invalid++
         continue
       }
-      let start = int(item.start_word_index)
-      let end = int(item.end_word_index)
+      let start: number | null
+      let end: number | null
+      if (p.sentences) {
+        const a = sentenceRef(item.start_sentence)
+        const b = sentenceRef(item.end_sentence)
+        const lo = p.firstSentence ?? 0
+        const hi = p.lastSentence ?? p.sentences.length - 1
+        if (a === null || b === null || b < lo || a > hi || b < a) {
+          invalid++
+          continue
+        }
+        start = p.sentences[Math.max(lo, a)]![0]
+        end = p.sentences[Math.min(hi, b)]![1]
+      } else {
+        start = int(item.start_word_index)
+        end = int(item.end_word_index)
+      }
       if (start === null || end === null) {
         invalid++
         continue
@@ -280,6 +306,11 @@ export const triage: CapabilitySpec<{ items: TriageItem[] }, Map<string, Triage>
 export interface ScoringItem {
   id: string
   taggedText: string
+  /**
+   * Sentence mode: taggedText is `[sN]` lines and the four ranges below are
+   * sentence numbers; `sentences` maps a sentence number to its word range.
+   */
+  sentences?: readonly (readonly [number, number])[]
   candidateFirst: number
   candidateLast: number
   contextFirst: number
@@ -307,7 +338,7 @@ const CONTENT_EMPHASIS: Record<ContentType, string> = {
 
 export const scoring: CapabilitySpec<ScoringRequest, Map<string, Scores>> = {
   name: 'text_scoring',
-  prompt: 'scoring_v2',
+  prompt: 'scoring_v3',
   temperature: 0.2,
   maxTokens: (p) => 800 + 320 * p.items.length,
   render: (p) =>
@@ -316,9 +347,13 @@ export const scoring: CapabilitySpec<ScoringRequest, Map<string, Scores>> = {
     p.items
       .map(
         (i) =>
-          `### candidate_id: ${i.id}\nProposed clip: words ${i.candidateFirst}-${i.candidateLast} ` +
-          `(${Math.round(i.durationS)} s). Context shown: words ${i.contextFirst}-${i.contextLast}. ` +
-          `Proposed type: ${i.momentType}.\n${i.taggedText}`,
+          i.sentences
+            ? `### candidate_id: ${i.id}\nProposed clip: sentences s${i.candidateFirst}-s${i.candidateLast} ` +
+              `(${Math.round(i.durationS)} s). Context shown: s${i.contextFirst}-s${i.contextLast}. ` +
+              `Proposed type: ${i.momentType}.\n${i.taggedText}`
+            : `### candidate_id: ${i.id}\nProposed clip: words ${i.candidateFirst}-${i.candidateLast} ` +
+              `(${Math.round(i.durationS)} s). Context shown: words ${i.contextFirst}-${i.contextLast}. ` +
+              `Proposed type: ${i.momentType}.\n${i.taggedText}`,
       )
       .join('\n\n'),
   parse: (reply, p) => {
@@ -337,10 +372,21 @@ export const scoring: CapabilitySpec<ScoringRequest, Map<string, Scores>> = {
       }
       const overall = unit(raw.overall)
       if (overall === null || Object.keys(dimensions).length < Math.floor(SCORE_DIMENSIONS.length / 2)) continue
-      let start = int(raw.start_word_index)
-      let end = int(raw.end_word_index)
-      if (!(start !== null && end !== null && item.contextFirst <= start && start < end && end <= item.contextLast)) {
+      let start: number | null
+      let end: number | null
+      if (item.sentences) {
+        start = sentenceRef(raw.start_sentence)
+        end = sentenceRef(raw.end_sentence)
+      } else {
+        start = int(raw.start_word_index)
+        end = int(raw.end_word_index)
+      }
+      const minSpan = item.sentences ? 0 : 1
+      if (!(start !== null && end !== null && item.contextFirst <= start && start + minSpan <= end && end <= item.contextLast)) {
         start = end = null
+      } else if (item.sentences) {
+        start = item.sentences[start]![0]
+        end = item.sentences[end]![1]
       }
       out.set(item.id, {
         dimensions,

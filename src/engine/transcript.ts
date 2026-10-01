@@ -107,6 +107,64 @@ export class Transcript {
     for (let i = Math.max(0, first); i <= end; i++) parts.push(`[${i}]${this.words[i]!.text.trim()}`)
     return parts.join(' ')
   }
+
+  private sentenceCache: [number, number][] | null = null
+
+  /**
+   * Sentences as inclusive word ranges. Models cite sentence numbers instead
+   * of word numbers: one tag per sentence instead of one per word cuts the
+   * prompt by more than half, and clips snap to sentence edges anyway.
+   * Long unpunctuated runs are split so a sentence never exceeds ~35 words.
+   */
+  get sentences(): [number, number][] {
+    if (!this.sentenceCache) {
+      const out: [number, number][] = []
+      let start = 0
+      for (let i = 0; i < this.words.length; i++) {
+        const length = i - start + 1
+        const word = this.words[i]!
+        if (endsSentence(word) || (length >= 20 && endsClause(word)) || length >= 35 || i === this.words.length - 1) {
+          out.push([start, i])
+          start = i + 1
+        }
+      }
+      this.sentenceCache = out
+    }
+    return this.sentenceCache
+  }
+
+  /** Index of the sentence containing word `index`. */
+  sentenceOf(index: number): number {
+    const s = this.sentences
+    let lo = 0
+    let hi = s.length - 1
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1
+      if (s[mid]![0] <= index) lo = mid
+      else hi = mid - 1
+    }
+    return lo
+  }
+
+  /** `[s12] sentence text` lines for sentences first..last (inclusive). */
+  taggedSentences(first: number, last: number): string {
+    const s = this.sentences
+    const lines: string[] = []
+    for (let i = Math.max(0, first); i <= Math.min(last, s.length - 1); i++) {
+      lines.push(`[s${i}] ${this.textBetween(s[i]![0], s[i]![1])}`)
+    }
+    return lines.join('\n')
+  }
+}
+
+/** Reads a sentence reference like 12, "12" or "s12". */
+export function sentenceRef(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isInteger(value)) return value
+  if (typeof value === 'string') {
+    const m = /^\s*s?(\d+)\s*$/i.exec(value)
+    if (m) return Number(m[1])
+  }
+  return null
 }
 
 /**
