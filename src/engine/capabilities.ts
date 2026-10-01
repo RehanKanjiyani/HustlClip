@@ -11,7 +11,7 @@
 
 import type { Capability } from '../../shared/models'
 import { MOMENT_TYPES, type MomentType, type Scores, type Triage, type Verdict } from './candidates'
-import { extractJsonObject } from './json'
+import { extractJsonObject, salvageArray } from './json'
 import { PROMPTS, type PromptName } from './prompts'
 
 export type CapabilityErrorCategory = 'malformed' | 'schema' | 'incomplete' | 'invalid_references'
@@ -98,12 +98,27 @@ function items(data: Record<string, unknown>, ...keys: string[]): unknown[] {
   return []
 }
 
-function parseJson(reply: string): Record<string, unknown> {
+/**
+ * The reply as an object. When the expected list is missing because the reply
+ * was cut off, the complete items before the cut are recovered, so a long
+ * answer that ran out of room still counts for what it finished.
+ */
+function parseJson(reply: string, listKeys: string[] = []): Record<string, unknown> {
+  let data: Record<string, unknown> | null = null
+  let error: Error | null = null
   try {
-    return extractJsonObject(reply)
-  } catch (error) {
-    throw new CapabilityError(`Response is not valid JSON: ${(error as Error).message}`, 'malformed')
+    data = extractJsonObject(reply)
+  } catch (e) {
+    error = e as Error
   }
+  if (data && (!listKeys.length || listKeys.some((k) => Array.isArray(data![k])))) return data
+  const salvaged = listKeys.length ? salvageArray(reply, listKeys) : null
+  if (salvaged) {
+    const contentType = /"content_type"\s*:\s*"([^"]*)"/.exec(reply)?.[1]
+    return { content_type: contentType, [salvaged.key]: salvaged.items }
+  }
+  if (data) return data
+  throw new CapabilityError(`Response is not valid JSON: ${error?.message ?? 'unknown'}`, 'malformed')
 }
 
 function momentType(value: unknown): MomentType | undefined {
@@ -160,7 +175,7 @@ export const discovery: CapabilitySpec<DiscoveryRequest, DiscoveryResult> = {
     `Target clip length: ${Math.round(p.minS)}-${Math.round(p.maxS)} s.\n` +
     `Return at most ${p.maxCandidates} candidates, strongest first.\n\n---\n${p.text}\n---`,
   parse: (reply, p) => {
-    const data = parseJson(reply)
+    const data = parseJson(reply, ['candidates', 'clips', 'moments'])
     const raw = items(data, 'candidates', 'clips', 'moments')
     let contentType = text(data.content_type, 30).toLowerCase() as ContentType
     if (!CONTENT_TYPES.includes(contentType)) contentType = 'general'
@@ -238,7 +253,7 @@ export const triage: CapabilitySpec<{ items: TriageItem[] }, Map<string, Triage>
       1,
     ),
   parse: (reply, p) => {
-    const data = parseJson(reply)
+    const data = parseJson(reply, ['decisions', 'candidates', 'clips'])
     const known = new Set(p.items.map((i) => i.id))
     const out = new Map<string, Triage>()
     for (const raw of items(data, 'decisions', 'candidates', 'clips')) {
@@ -307,7 +322,7 @@ export const scoring: CapabilitySpec<ScoringRequest, Map<string, Scores>> = {
       )
       .join('\n\n'),
   parse: (reply, p) => {
-    const data = parseJson(reply)
+    const data = parseJson(reply, ['scores', 'candidates'])
     const byId = new Map(p.items.map((i) => [i.id, i]))
     const out = new Map<string, Scores>()
     for (const raw of items(data, 'scores', 'candidates')) {
@@ -379,7 +394,7 @@ export const judgment: CapabilitySpec<JudgmentRequest, Map<string, Verdict>> = {
       )
       .join('\n\n'),
   parse: (reply, p) => {
-    const data = parseJson(reply)
+    const data = parseJson(reply, ['verdicts', 'candidates', 'clips'])
     const known = new Set(p.finalists.map((f) => f.id))
     const out = new Map<string, Verdict>()
     for (const raw of items(data, 'verdicts', 'candidates', 'clips')) {
@@ -427,7 +442,7 @@ export const duplicates: CapabilitySpec<{ pairs: DuplicatePair[] }, Map<string, 
       1,
     ),
   parse: (reply, p) => {
-    const data = parseJson(reply)
+    const data = parseJson(reply, ['pairs'])
     const wanted = new Set(p.pairs.map((x) => `${x.a}|${x.b}`))
     const out = new Map<string, number>()
     for (const raw of items(data, 'pairs')) {

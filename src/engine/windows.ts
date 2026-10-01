@@ -37,7 +37,7 @@ export function buildWindows(transcript: Transcript, windowS = WINDOW_S, overlap
   return windows
 }
 
-/** Adaptive breadth: roughly one proposal per minute of speech, 4..12. */
+/** Adaptive breadth: roughly one proposal per minute of speech, 4..8. */
 export function candidatesPerWindow(durationS: number): number {
-  return Math.max(4, Math.min(12, Math.round(durationS / 60) + 2))
+  return Math.max(4, Math.min(8, Math.round(durationS / 60) + 2))
 }
