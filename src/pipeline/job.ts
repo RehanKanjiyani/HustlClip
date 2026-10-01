@@ -97,22 +97,21 @@ export class JobRunner {
 
       // 1. prepare
       let prepared = await store.load<{ energy: Float32Array; duration: number }>('audio_meta')
-      let ogg = prepared ? await files.read(this.job.id, 'speech.ogg') : null
-      if (!prepared || !ogg) {
+      if (!prepared) {
         this.progress('prepare', 0, STAGE_LABELS.prepare)
         const speech = await extractSpeechAudio(this.file, (f) => this.progress('prepare', f, STAGE_LABELS.prepare), signal)
-        await files.write(this.job.id, 'speech.ogg', speech.ogg)
         prepared = { energy: speech.energy, duration: speech.duration }
         await store.save('audio_meta', prepared)
-        ogg = await files.read(this.job.id, 'speech.ogg')
         this.log(`Prepared ${timestamp(speech.duration)} of audio (${(speech.ogg.byteLength / 1e6).toFixed(1)} MB).`)
       }
+      // Jobs from older versions kept a whole-video speech file; it's no longer used.
+      await files.remove(this.job.id, 'speech.ogg')
       const silences: Silence[] = findSilences(prepared.energy)
 
       // 2. listen
       this.progress('listen', 0, STAGE_LABELS.listen)
       const words: Word[] = await transcribe({
-        ogg: new Uint8Array(await ogg!.arrayBuffer()),
+        file: this.file,
         energy: prepared.energy,
         duration: prepared.duration,
         silences,

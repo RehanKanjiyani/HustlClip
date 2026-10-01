@@ -16,7 +16,7 @@ import { mapPool } from '../engine/pool'
 import { type Silence, type Word, estimateWordTimes, tidyWords } from '../engine/transcript'
 import { api } from '../lib/api'
 import { withRetries } from '../lib/retry'
-import { FRAME_S, OggSlicer, planCuts } from '../media/audio'
+import { FRAME_S, SpeechCutter, planCuts } from '../media/audio'
 
 const ENGLISH_CHUNK_S = 8 * 60
 const ENGLISH_SEARCH_S = 45
@@ -25,9 +25,12 @@ const PIECE_S = 20
 const PIECE_SEARCH_S = 8
 const PIECES_PER_UPLOAD = 12
 const CONCURRENCY = 3
+/** Vercel refuses request bodies over 4.5 MB; stay well under it. */
+const MAX_UPLOAD_BYTES = 3_500_000
 
 export interface TranscribeInput {
-  ogg: Uint8Array
+  /** The original video; speech pieces are cut from it on demand. */
+  file: Blob
   energy: Float32Array
   duration: number
   silences: Silence[]
@@ -40,18 +43,18 @@ export interface TranscribeInput {
 export async function transcribe(input: TranscribeInput): Promise<Word[]> {
   const cached = await input.store.load<Word[]>('transcript')
   if (cached) return cached
-  const slicer = new OggSlicer(input.ogg)
+  const cutter = new SpeechCutter(input.file)
   try {
-    const words = input.language === 'en' ? await english(input, slicer) : await multilingual(input, slicer)
+    const words = input.language === 'en' ? await english(input, cutter) : await multilingual(input, cutter)
     const tidy = tidyWords(words)
     await input.store.save('transcript', tidy)
     return tidy
   } finally {
-    slicer.dispose()
+    cutter.dispose()
   }
 }
 
-async function english(input: TranscribeInput, slicer: OggSlicer): Promise<Word[]> {
+async function english(input: TranscribeInput, cutter: SpeechCutter): Promise<Word[]> {
   const [primary, backup] = speechModelsFor('en')
   const cuts = planCuts(input.duration, input.silences, ENGLISH_CHUNK_S, ENGLISH_SEARCH_S)
   const edges = [0, ...cuts, input.duration]
@@ -67,15 +70,12 @@ async function english(input: TranscribeInput, slicer: OggSlicer): Promise<Word[
     } else {
       const from = Math.max(0, chunk.start - ENGLISH_PAD_S)
       const to = Math.min(input.duration, chunk.end + ENGLISH_PAD_S)
-      const audio = await slicer.slice(from, to)
-      const result = await withRetries((attempt) => {
+      const words = await recognizeRange(cutter, from, to, (audio, attempt) => {
         const model = attempt >= 2 && backup ? backup : primary!
         return api.transcribe([audio], model.id, languageCode('en'), input.signal)
       }, input.signal)
-      const part = result.parts[0] ?? { words: [] }
       const isLast = index === chunks.length - 1
-      done[index] = part.words
-        .map((w) => ({ text: w.w, start: from + w.s, end: from + Math.max(w.s, w.e) }))
+      done[index] = words
         .filter((w) => {
           const mid = (w.start + w.end) / 2
           return mid >= chunk.start && (mid < chunk.end || isLast)
@@ -89,7 +89,7 @@ async function english(input: TranscribeInput, slicer: OggSlicer): Promise<Word[
   return chunks.flatMap((_, i) => done[i] ?? [])
 }
 
-async function multilingual(input: TranscribeInput, slicer: OggSlicer): Promise<Word[]> {
+async function multilingual(input: TranscribeInput, cutter: SpeechCutter): Promise<Word[]> {
   const [model] = speechModelsFor(input.language)
   const cuts = planCuts(input.duration, input.silences, PIECE_S, PIECE_SEARCH_S)
   const edges = [0, ...cuts, input.duration]
@@ -108,7 +108,7 @@ async function multilingual(input: TranscribeInput, slicer: OggSlicer): Promise<
   await mapPool(uploads, CONCURRENCY, async (group, index) => {
     if (done[index]) return
     const audio: Uint8Array[] = []
-    for (const piece of group) audio.push(await slicer.slice(piece.start, piece.end))
+    for (const piece of group) audio.push(await cutter.cut(piece.start, piece.end))
     const result = await withRetries(
       () => api.transcribe(audio, model!.id, languageCode(input.language), input.signal),
       input.signal,
@@ -125,6 +125,29 @@ async function multilingual(input: TranscribeInput, slicer: OggSlicer): Promise<
   return uploads.flatMap((_, i) => done[i] ?? [])
 }
 
+/**
+ * Transcribes [from, to] of the video as one upload, splitting the range in
+ * half (at its quietest point) whenever the audio would be too big to send.
+ * Returns words with absolute times.
+ */
+async function recognizeRange(
+  cutter: SpeechCutter,
+  from: number,
+  to: number,
+  send: (audio: Uint8Array, attempt: number) => Promise<{ parts: { words: { w: string; s: number; e: number }[] }[] }>,
+  signal?: AbortSignal,
+): Promise<Word[]> {
+  const audio = await cutter.cut(from, to)
+  if (audio.byteLength > MAX_UPLOAD_BYTES && to - from > 20) {
+    const mid = (from + to) / 2
+    const left = await recognizeRange(cutter, from, mid + 0.5, send, signal)
+    const right = await recognizeRange(cutter, mid - 0.5, to, send, signal)
+    return [...left.filter((w) => (w.start + w.end) / 2 < mid), ...right.filter((w) => (w.start + w.end) / 2 >= mid)]
+  }
+  const result = await withRetries((attempt) => send(audio, attempt), signal)
+  const part = result.parts[0] ?? { words: [] }
+  return part.words.map((w) => ({ text: w.w, start: from + w.s, end: from + Math.max(w.s, w.e) }))
+}
 /** At least ~10% of the span is louder than a quiet room. */
 function hasSpeech(energy: Float32Array, start: number, end: number): boolean {
   const a = Math.max(0, Math.floor(start / FRAME_S))
