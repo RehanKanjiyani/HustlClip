@@ -153,12 +153,12 @@ export const MODELS: readonly ModelEntry[] = [
     temperature: false,
   },
   {
-    // Only present when GEMINI_API_KEY is set. Fast, with a free tier: a strong
+    // Only present when GEMINI_API_KEY is set. The cheapest Gemini model: fast, with a free tier: a strong
     // partner for NVIDIA on the high-volume steps. GEMINI_MODEL overrides the name.
     id: 'gemini/flash',
     provider: 'gemini',
-    apiModel: 'gemini-flash-latest',
-    label: 'Gemini Flash',
+    apiModel: 'gemini-flash-lite-latest',
+    label: 'Gemini Flash-Lite',
     priority: {
       candidate_discovery: 5,
       candidate_triage: 5,
@@ -172,11 +172,11 @@ export const MODELS: readonly ModelEntry[] = [
     temperature: true,
   },
   {
-    // Only present when OPENAI_API_KEY is set. OPENAI_MODEL overrides the name.
+    // Only present when OPENAI_API_KEY is set. OpenAI's cheapest model; OPENAI_MODEL overrides the name.
     id: 'openai/mini',
     provider: 'openai',
-    apiModel: 'gpt-5.4-mini',
-    label: 'GPT-5.4 mini',
+    apiModel: 'gpt-5.4-nano',
+    label: 'GPT-5.4 nano',
     priority: {
       candidate_discovery: 25,
       candidate_triage: 25,

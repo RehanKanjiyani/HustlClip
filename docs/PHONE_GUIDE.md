@@ -124,8 +124,8 @@ pick. Add any of these in Vercel → your project → **Settings → Environment
 If a key fails or runs out of credit, HustlClip quietly uses the others. Only transcript text is sent to these
 services, never your video.
 
-Optional model names (only if a provider retires the default): `GEMINI_MODEL` (default `gemini-flash-latest`),
-`OPENAI_MODEL` (default `gpt-5.4-mini`), `ANTHROPIC_MODEL` (default `claude-opus-5`).
+Optional model names (only if a provider retires the default): `GEMINI_MODEL` (default `gemini-flash-lite-latest`, the cheapest),
+`OPENAI_MODEL` (default `gpt-5.4-nano`, the cheapest), `ANTHROPIC_MODEL` (default `claude-opus-5`).
 
 ## Changing things later
 
