@@ -77,8 +77,13 @@ export function compositeScore(c: Candidate): number {
     score = 0.85 * mid + 0.15 * score
   }
   if (c.verdict) score = 0.65 * c.verdict.score + 0.35 * score
+  // Measured audio energy: the room reacting (laughter, shouting, hype) is a
+  // signal words alone miss. A bonus only, so a quiet great story still wins.
+  if (c.energy !== undefined) score += ENERGY_BONUS * c.energy
   return Math.max(0, Math.min(1, score))
 }
+
+const ENERGY_BONUS = 0.06
 
 export function tier(c: Candidate): Tier {
   if (c.source === 'fallback') return 'fallback'

@@ -10,14 +10,17 @@
  * rate limit) continues where the job stopped instead of starting over.
  */
 
-import type { ProviderId } from '../../shared/models'
-import { CAPTION_STYLES, DEFAULT_CAPTION_STYLE, clipWords, toSrt } from '../engine/captions'
+import { MODELS, type ProviderId } from '../../shared/models'
+import { ASPECTS, clipWords, resolveStyle, toSrt } from '../engine/captions'
+import { plainReasons, postText } from '../engine/details'
 import { Funnel, timestamp } from '../engine/funnel'
 import { AIManager, FatalAIError } from '../engine/manager'
+import { compositeScore } from '../engine/selection'
 import { detectCuts, planReframe, centrePlan } from '../engine/reframe'
 import { type Silence, Transcript, type Word } from '../engine/transcript'
 import { api } from '../lib/api'
-import { type ClipRecord, type JobRecord, files, jobStore, jobs } from '../lib/store'
+import { taste } from '../lib/prefs'
+import { type AIStats, type ClipRecord, type JobRecord, type PoolEntry, files, jobStore, jobs } from '../lib/store'
 import { extractSpeechAudio, findSilences } from '../media/audio'
 import { analyseClip, refineCut } from '../media/faces'
 import { renderClip } from '../media/render'
@@ -87,7 +90,7 @@ export class JobRunner {
   }
 
   async run(): Promise<JobRecord> {
-    await this.update({ status: 'running', error: null }, true)
+    await this.update({ status: 'running', error: null, runStartedAt: Date.now(), runStartProgress: this.job.progress }, true)
     await this.keepAwake()
     let source: Source | null = null
     try {
@@ -133,6 +136,12 @@ export class JobRunner {
         providers: this.providers,
         signal,
         onRecord: (r) => {
+          const ai: AIStats = { ...(this.job.ai ?? { model: null, calls: 0, failed: 0, tokens: 0 }) }
+          ai.calls++
+          ai.tokens += (r.inputTokens ?? 0) + (r.outputTokens ?? 0)
+          if (r.status === 'success') ai.model = MODELS.find((m) => m.id === r.model)?.label ?? r.model
+          else ai.failed++
+          void this.update({ ai })
           if (r.status !== 'success') this.log(`AI ${r.capability} via ${r.model}: ${r.status} ${r.category ?? ''} ${r.detail.slice(0, 90)}`.trim())
         },
       })
@@ -148,6 +157,8 @@ export class JobRunner {
           store,
           signal,
           log: (m) => this.log(m),
+          energy: prepared.energy,
+          examples: taste.examples(),
         })
         const result = await funnel.run((f, m) => this.progress('choose', f, m))
         contentType = result.contentType
@@ -159,18 +170,40 @@ export class JobRunner {
           reason: p.candidate.verdict?.reason || p.candidate.reason,
           startS: p.candidate.startS,
           endS: Math.min(p.candidate.endS, prepared!.duration),
+          startWord: p.candidate.startWord,
+          endWord: p.candidate.endWord,
           tier: p.tier,
           score: Math.round(p.final * 100),
           filler: p.tier === 'fallback',
           layout: '',
           file: null,
           srt: toSrt(clipWords(words, p.candidate.startS, p.candidate.endS)),
+          reasons: plainReasons(p.candidate),
+          ...postText(p.candidate, transcript, result.contentType),
         }))
+        const picked = new Set(clips.map((c) => c.id))
+        const pool: PoolEntry[] = result.pool
+          .filter((c) => !picked.has(c.id) && c.source === 'ai')
+          .slice(0, 30)
+          .map((c) => ({
+            id: c.id,
+            startWord: c.startWord,
+            endWord: c.endWord,
+            startS: c.startS,
+            endS: c.endS,
+            title: c.verdict?.title || c.scores?.title || c.title || 'Moment',
+            reason: c.verdict?.reason || c.reason,
+            score: Math.round(compositeScore(c) * 100),
+            reasons: plainReasons(c),
+            ...postText(c, transcript, result.contentType),
+          }))
+        await store.save('pool', pool)
         await this.update({ clips }, true)
       }
 
       // 4. make
-      const style = CAPTION_STYLES[this.job.captionStyle] ?? CAPTION_STYLES[DEFAULT_CAPTION_STYLE]!
+      const style = resolveStyle(this.job.captionStyle, this.job.captionCustom)
+      const frame = ASPECTS[this.job.aspect ?? '9:16']
       const allowSplit = contentType === 'stream' || contentType === 'gaming'
       const pending = clips.filter((c) => !c.file)
       let done = clips.length - pending.length
@@ -182,7 +215,7 @@ export class JobRunner {
         const label = `Making clip ${done + 1} of ${clips.length}`
         this.progress('make', base, `${label}: finding faces`)
         const duration = clip.endS - clip.startS
-        let plan = source.video ? centrePlan(source.width, source.height, duration) : null
+        let plan = source.video ? centrePlan(source.width, source.height, duration, frame.w, frame.h) : null
         if (source.video) {
           try {
             const analysis = await analyseClip(source.video, clip.startS, clip.endS, source.width, signal)
@@ -197,6 +230,8 @@ export class JobRunner {
               samples: analysis.samples,
               cuts,
               allowSplit,
+              outW: frame.w,
+              outH: frame.h,
             })
           } catch (error) {
             if ((error as Error)?.name === 'AbortError') throw error
@@ -212,12 +247,16 @@ export class JobRunner {
           plan,
           words: clipWords(words, clip.startS, clip.endS),
           style,
+          frame,
+          zoom: this.job.zoom ?? true,
           signal,
           onProgress: (f) => this.progress('make', base + share * (0.25 + 0.75 * f), `${label}: rendering`),
         })
-        const name = `${String(clip.rank).padStart(2, '0')}-${slug(clip.title)}.mp4`
+        // A fresh name per render, so a re-rendered clip never shows a stale preview.
+        const name = `${String(clip.rank).padStart(2, '0')}-${slug(clip.title)}-${Date.now().toString(36)}.mp4`
         await files.write(this.job.id, name, mp4)
         clip.file = name
+        clip.srt = toSrt(clipWords(words, clip.startS, clip.endS))
         clip.layout = [...new Set(plan.segments.map((s) => s.note))].join(' · ')
         done++
         await this.update({ clips: [...clips] }, true)
@@ -273,7 +312,10 @@ function slug(text: string): string {
   )
 }
 
-export function newJob(file: File, options: Pick<JobRecord, 'language' | 'captionStyle' | 'count' | 'minS' | 'maxS'>): JobRecord {
+export function newJob(
+  file: File,
+  options: Pick<JobRecord, 'language' | 'captionStyle' | 'count' | 'minS' | 'maxS' | 'aspect' | 'captionCustom' | 'zoom'>,
+): JobRecord {
   const now = Date.now()
   return {
     id: `${now.toString(36)}-${Math.random().toString(36).slice(2, 8)}`,

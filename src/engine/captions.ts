@@ -138,6 +138,59 @@ export const CAPTION_STYLES: Record<string, CaptionStyle> = {
 
 export const DEFAULT_CAPTION_STYLE = 'bold_pop'
 
+/** The creator's own tweaks on top of a preset (the "brand kit"). */
+export interface CaptionCustom {
+  font?: 'Anton' | 'Inter' | 'System'
+  primary?: string
+  accent?: string
+  /** Size multiplier, 0.7..1.5. */
+  size?: number
+  position?: 'bottom' | 'middle' | 'top'
+  allCaps?: boolean
+}
+
+export const CAPTION_FONTS: Record<NonNullable<CaptionCustom['font']>, { family: string; weight: number }> = {
+  Anton: { family: 'Anton', weight: 400 },
+  Inter: { family: 'Inter', weight: 700 },
+  System: { family: 'system-ui', weight: 800 },
+}
+
+/** A preset with the creator's tweaks applied. */
+export function resolveStyle(key: string, custom: CaptionCustom = {}): CaptionStyle {
+  const base = CAPTION_STYLES[key] ?? CAPTION_STYLES[DEFAULT_CAPTION_STYLE]!
+  const font = custom.font ? CAPTION_FONTS[custom.font] : null
+  const size = Math.max(0.7, Math.min(1.5, custom.size ?? 1))
+  const marginRatio = custom.position === 'top' ? 0.8 : custom.position === 'middle' ? 0.42 : base.marginRatio
+  return {
+    ...base,
+    font: font?.family ?? base.font,
+    weight: font?.weight ?? base.weight,
+    primary: custom.primary ?? base.primary,
+    accent: base.accent === null ? null : (custom.accent ?? base.accent),
+    sizeRatio: base.sizeRatio * size,
+    marginRatio,
+    allCaps: custom.allCaps ?? base.allCaps,
+  }
+}
+
+/** Output shapes, with the share of the frame each platform's on-screen buttons cover. */
+export const ASPECTS = {
+  '9:16': { w: 1080, h: 1920, label: '9:16 · Shorts, Reels, TikTok', safeBottom: 0.2, safeTop: 0.12 },
+  '4:5': { w: 1080, h: 1350, label: '4:5 · Instagram feed', safeBottom: 0.08, safeTop: 0.06 },
+  '1:1': { w: 1080, h: 1080, label: '1:1 · Square feed', safeBottom: 0.08, safeTop: 0.06 },
+} as const
+
+export type AspectKey = keyof typeof ASPECTS
+
+/** WebVTT from SRT text (same cues, VTT header and dot decimals). */
+export function srtToVtt(srt: string): string {
+  const body = srt
+    .replace(/\r/g, '')
+    .replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2')
+    .replace(/^\d+\n(?=\d{2}:)/gm, '')
+  return `WEBVTT\n\n${body}`
+}
+
 export interface CaptionGroup {
   words: Word[]
   start: number

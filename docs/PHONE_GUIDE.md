@@ -82,6 +82,18 @@ Longer streams (2–3 hours) take longer in the "listening" and "choosing" steps
 **Filler clips:** if a video has fewer strong moments than you asked for, HustlClip fills the set from the best remaining
 parts and marks those clips "Filler". It never repeats a moment.
 
+## What you can do with finished clips
+
+- **Score and reasons:** every clip shows a score and a few plain reasons (for example "Grabs attention in the first seconds", "Loud, high-energy moment").
+- **Post text:** a ready caption and hashtags under each clip. **Copy post text** copies both; **Share** sends them along with the video.
+- **Trim:** tap **Trim**, move the start or end one sentence earlier or later, then **Re-render this clip**. Only that clip is redone.
+- **More moments:** shows the next-best moments HustlClip found. **Add clip** renders one as an extra clip.
+- **Restyle:** change the caption style, colours, font, size, position or shape (9:16, 4:5, 1:1), then re-render all clips. Nothing else is redone.
+- **Posted / Not this one:** tap after you post (or skip) a clip. HustlClip remembers your taste on this phone and favours similar moments next time.
+- **.srt / .vtt:** caption files, for platforms that want them separately.
+- After a reload, these ask you to pick the original video again (browsers can't reopen files on their own).
+
+The **Captions & shape** button on the home screen is your saved look (brand kit): it's used for every new job.
 ## Part E: get YouTube / Twitch videos onto your phone (Seal)
 
 YouTube blocks downloads from cloud servers, so the video has to come to your phone first. **Seal** is a free,

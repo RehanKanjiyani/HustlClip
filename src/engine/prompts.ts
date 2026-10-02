@@ -126,7 +126,7 @@ Respond with ONLY this JSON object, one entry per candidate, using the candidate
   ]
 }`,
 
-  judgment_v2: `You are the senior editor making the final call on which moments from one long video become short-form clips (TikTok, Reels, Shorts). Cheaper screening passes produced the finalists below; each has an id, its position in the video, a screening score, and its full text.
+  judgment_v3: `You are the senior editor making the final call on which moments from one long video become short-form clips (TikTok, Reels, Shorts). Cheaper screening passes produced the finalists below; each has an id, its position in the video, a screening score, and its full text.
 
 Compare the finalists against each other, not in isolation. You are deciding what a creator should actually publish.
 
@@ -137,6 +137,8 @@ For each finalist:
 - title: a specific, non-clickbait title under 60 characters, in the language of the transcript.
 - reason: one sentence naming the hook and the payoff (or why you rejected it).
 - same_story_as: ids of other finalists that tell the same story, make the same point, or retell the same moment, so posting both would feel repetitive. Leave it empty when there is none.
+- post_caption: the text to post with the clip, in the language of the transcript: open with the hook line (quoted from the clip), then one short sentence. Under 150 characters. No hashtags here.
+- hashtags: 3 to 6 relevant hashtags for Shorts, Reels and TikTok, without the # sign.
 
 Judge by: hook in the first seconds, whether a stranger understands it without context, whether the payoff lands inside the clip, emotional intensity, curiosity, quotability, usefulness, surprise, and whether a viewer would watch to the end. A clip that starts mid-thought or ends before its payoff should score low even if the idea is good.
 
@@ -152,7 +154,9 @@ Respond with ONLY this JSON object:
       "score": 88,
       "title": "Why he quit the day he got promoted",
       "reason": "Opens on a contradiction and pays off with the real reason.",
-      "same_story_as": []
+      "same_story_as": [],
+      "post_caption": "\"I quit the day they promoted me.\" Here is why he walked away.",
+      "hashtags": ["career", "storytime", "podcast"]
     }
   ]
 }`,

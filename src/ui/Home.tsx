@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { LANGUAGES, type LanguageChoice, type ProviderId } from '../../shared/models'
-import { CAPTION_STYLES, DEFAULT_CAPTION_STYLE } from '../engine/captions'
+import { ASPECTS, CAPTION_STYLES } from '../engine/captions'
+import { type Brand, brand } from '../lib/prefs'
 import { newJob } from '../pipeline/job'
 import { type JobRecord, jobs } from '../lib/store'
 import { navigate } from './nav'
 import { formatAgo, formatBytes } from './format'
 import { attachFile, start } from './runs'
+import { CaptionStudio } from './Studio'
 
 const LENGTHS = [
   { id: 'short', label: '15–45 s', minS: 15, maxS: 45 },
@@ -18,10 +20,9 @@ interface Options {
   count: number
   length: (typeof LENGTHS)[number]['id']
   language: LanguageChoice
-  captionStyle: string
 }
 
-const DEFAULTS: Options = { count: 10, length: 'medium', language: 'en', captionStyle: DEFAULT_CAPTION_STYLE }
+const DEFAULTS: Options = { count: 10, length: 'medium', language: 'en' }
 
 function loadOptions(): Options {
   try {
@@ -43,6 +44,12 @@ export function Home({
   const [file, setFile] = useState<File | null>(null)
   const [options, setOptions] = useState<Options>(loadOptions)
   const [showOptions, setShowOptions] = useState(false)
+  const [showStudio, setShowStudio] = useState(false)
+  const [brandKit, setBrandKit] = useState<Brand>(brand.load)
+  const updateBrand = (next: Brand) => {
+    setBrandKit(next)
+    brand.save(next)
+  }
   const [recent, setRecent] = useState<JobRecord[]>([])
   const [error, setError] = useState<string | null>(null)
   const input = useRef<HTMLInputElement>(null)
@@ -74,7 +81,10 @@ export function Home({
     const length = LENGTHS.find((l) => l.id === options.length) ?? LENGTHS[1]
     const job = newJob(file, {
       language: options.language,
-      captionStyle: options.captionStyle,
+      captionStyle: brandKit.captionStyle,
+      captionCustom: brandKit.custom,
+      aspect: brandKit.aspect,
+      zoom: brandKit.zoom,
       count: options.count,
       minS: length.minS,
       maxS: length.maxS,
@@ -149,17 +159,19 @@ export function Home({
               ))}
             </select>
           </label>
-          <label className="block">
-            <span className="eyebrow">Captions</span>
-            <select className="field mt-1" value={options.captionStyle} onChange={(e) => set({ captionStyle: e.target.value })}>
-              {Object.values(CAPTION_STYLES).map((s) => (
-                <option key={s.key} value={s.key}>
-                  {s.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="block">
+            <span className="eyebrow">Captions &amp; shape</span>
+            <button type="button" className="field mt-1 text-left" onClick={() => setShowStudio((v) => !v)}>
+              {CAPTION_STYLES[brandKit.captionStyle]?.label ?? 'Bold Pop'} · {brandKit.aspect}
+            </button>
+          </div>
         </div>
+        {showStudio && (
+          <div className="border-l border-ink-800 pl-4">
+            <CaptionStudio value={brandKit} onChange={updateBrand} />
+            <p className="mt-3 text-xs text-ink-500">Saved on this phone and used for every new job. {ASPECTS[brandKit.aspect].label}.</p>
+          </div>
+        )}
 
         <button type="button" className="btn btn-quiet text-xs" onClick={() => setShowOptions((v) => !v)}>
           {showOptions ? 'Hide options' : 'More options'}
@@ -193,7 +205,7 @@ export function Home({
               </div>
             </div>
             <p className="text-xs leading-relaxed text-ink-500">
-              {LANGUAGES.find((l) => l.id === options.language)?.hint}. {CAPTION_STYLES[options.captionStyle]?.description}
+              {LANGUAGES.find((l) => l.id === options.language)?.hint}. {CAPTION_STYLES[brandKit.captionStyle]?.description}
             </p>
           </div>
         )}

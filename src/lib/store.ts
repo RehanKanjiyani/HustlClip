@@ -6,6 +6,7 @@
  */
 
 import type { LanguageChoice } from '../../shared/models'
+import type { AspectKey, CaptionCustom } from '../engine/captions'
 import type { Store } from '../engine/funnel'
 
 export type JobStatus = 'running' | 'paused' | 'done' | 'failed'
@@ -24,6 +25,38 @@ export interface ClipRecord {
   /** OPFS file name once rendered. */
   file: string | null
   srt: string
+  /** Word range in the transcript, for trimming by sentence. */
+  startWord?: number
+  endWord?: number
+  /** Plain-language reasons this clip was picked. */
+  reasons?: string[]
+  postCaption?: string
+  hashtags?: string[]
+  /** The creator's verdict, fed back into future picks. */
+  feedback?: 'posted' | 'skip'
+}
+
+/** A runner-up moment the creator can add as an extra clip. */
+export interface PoolEntry {
+  id: string
+  startWord: number
+  endWord: number
+  startS: number
+  endS: number
+  title: string
+  reason: string
+  score: number
+  reasons: string[]
+  postCaption: string
+  hashtags: string[]
+}
+
+export interface AIStats {
+  /** Label of the model that answered last. */
+  model: string | null
+  calls: number
+  failed: number
+  tokens: number
 }
 
 export interface JobRecord {
@@ -45,6 +78,16 @@ export interface JobRecord {
   error: string | null
   clips: ClipRecord[]
   log: string[]
+  /** Output shape; older jobs are 9:16. */
+  aspect?: AspectKey
+  /** The creator's caption tweaks (brand kit) at the time of the job. */
+  captionCustom?: CaptionCustom
+  /** Slow push-in on still shots. */
+  zoom?: boolean
+  ai?: AIStats
+  /** For the time-left estimate: when the current run began, and its progress then. */
+  runStartedAt?: number
+  runStartProgress?: number
 }
 
 const DB_NAME = 'hustlclip'

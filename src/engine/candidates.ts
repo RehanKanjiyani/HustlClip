@@ -61,6 +61,9 @@ export interface Verdict {
   title: string
   reason: string
   sameStoryAs: string[]
+  /** Ready-to-paste post text for the platform, in the video's language. */
+  postCaption?: string
+  hashtags?: string[]
 }
 
 export interface Candidate {
@@ -84,6 +87,11 @@ export interface Candidate {
   scores?: Scores
   verdict?: Verdict
   adjusted?: boolean
+  /**
+   * How loud and lively the moment is compared with the rest of the video,
+   * 0..1 (laughter, shouting and hype all raise it). Measured, not guessed.
+   */
+  energy?: number
 }
 
 export interface Proposal {

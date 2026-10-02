@@ -1,6 +1,6 @@
 /**
  * Drawing one output frame: the layout (crop, stack, split, fit) and the
- * burned-in captions, onto a 1080x1920 canvas.
+ * burned-in captions, onto a canvas of the chosen shape (9:16, 4:5, 1:1).
  */
 
 import type { VideoSample } from 'mediabunny'
@@ -8,8 +8,13 @@ import type { VideoSample } from 'mediabunny'
 import { type CaptionGroup, type CaptionStyle, groupAt } from '../engine/captions'
 import { type LayoutSegment, type Rect, SPLIT_CAM_SHARE, cropAt } from '../engine/reframe'
 
-export const OUT_W = 1080
-export const OUT_H = 1920
+export interface Frame {
+  w: number
+  h: number
+  /** Share of the frame covered by the platform's buttons at the bottom / top. */
+  safeBottom: number
+  safeTop: number
+}
 
 type Ctx = OffscreenCanvasRenderingContext2D
 
@@ -38,29 +43,55 @@ function drawRect(ctx: Ctx, sample: VideoSample, src: Rect, dx: number, dy: numb
   sample.draw(ctx, src.x, src.y, src.w, src.h, dx, dy, dw, dh)
 }
 
+/** Slow push-in on a still shot: up to 6% over the shot, so talking heads don't feel frozen. */
+const PUNCH_IN = 0.06
+const PUNCH_IN_MIN_S = 4
+
+function punchIn(rect: Rect, seg: LayoutSegment, t: number): Rect {
+  const length = seg.end - seg.start
+  if ((seg.keyframes?.length ?? 0) > 1 || length < PUNCH_IN_MIN_S) return rect
+  const f = Math.max(0, Math.min(1, (t - seg.start) / length))
+  const scale = 1 - PUNCH_IN * f
+  const w = rect.w * scale
+  const h = rect.h * scale
+  return { x: rect.x + (rect.w - w) / 2, y: rect.y + (rect.h - h) * 0.4, w, h }
+}
+
 let blurCanvas: OffscreenCanvas | null = null
 
-export function drawLayout(ctx: Ctx, sample: VideoSample, seg: LayoutSegment, t: number, sourceW: number, sourceH: number) {
+export function drawLayout(
+  ctx: Ctx,
+  sample: VideoSample,
+  seg: LayoutSegment,
+  t: number,
+  sourceW: number,
+  sourceH: number,
+  frame: Frame,
+  zoom = true,
+) {
+  const W = frame.w
+  const H = frame.h
   switch (seg.layout) {
     case 'crop': {
       const { x, y } = cropAt(seg, t)
-      drawRect(ctx, sample, { x, y, w: seg.cropW!, h: seg.cropH! }, 0, 0, OUT_W, OUT_H)
+      const rect = { x, y, w: seg.cropW!, h: seg.cropH! }
+      drawRect(ctx, sample, zoom ? punchIn(rect, seg, t) : rect, 0, 0, W, H)
       return
     }
     case 'stack': {
-      const half = OUT_H / 2
-      drawRect(ctx, sample, seg.top!, 0, 0, OUT_W, half)
-      drawRect(ctx, sample, seg.bottom!, 0, half, OUT_W, half)
+      const half = H / 2
+      drawRect(ctx, sample, seg.top!, 0, 0, W, half)
+      drawRect(ctx, sample, seg.bottom!, 0, half, W, half)
       ctx.fillStyle = '#000'
-      ctx.fillRect(0, half - 3, OUT_W, 6)
+      ctx.fillRect(0, half - 3, W, 6)
       return
     }
     case 'split': {
-      const camH = Math.round(OUT_H * SPLIT_CAM_SHARE)
-      drawRect(ctx, sample, seg.cam!, 0, 0, OUT_W, camH)
-      drawRect(ctx, sample, seg.main!, 0, camH, OUT_W, OUT_H - camH)
+      const camH = Math.round(H * SPLIT_CAM_SHARE)
+      drawRect(ctx, sample, seg.cam!, 0, 0, W, camH)
+      drawRect(ctx, sample, seg.main!, 0, camH, W, H - camH)
       ctx.fillStyle = '#000'
-      ctx.fillRect(0, camH - 3, OUT_W, 6)
+      ctx.fillRect(0, camH - 3, W, 6)
       return
     }
     case 'fit': {
@@ -72,10 +103,10 @@ export function drawLayout(ctx: Ctx, sample: VideoSample, seg: LayoutSegment, t:
       const ch = 96 / coverScale
       sample.draw(small, (sourceW - cw) / 2, (sourceH - ch) / 2, cw, ch, 0, 0, 54, 96)
       ctx.filter = 'blur(12px) brightness(0.6)'
-      ctx.drawImage(blurCanvas, -40, -40, OUT_W + 80, OUT_H + 80)
+      ctx.drawImage(blurCanvas, -40, -40, W + 80, H + 80)
       ctx.filter = 'none'
-      const h = (OUT_W / sourceW) * sourceH
-      drawRect(ctx, sample, { x: 0, y: 0, w: sourceW, h: sourceH }, 0, (OUT_H - h) / 2, OUT_W, h)
+      const h = (W / sourceW) * sourceH
+      drawRect(ctx, sample, { x: 0, y: 0, w: sourceW, h: sourceH }, 0, (H - h) / 2, W, h)
       return
     }
   }
@@ -93,19 +124,25 @@ interface Line {
 const layoutCache = new WeakMap<CaptionGroup, Line[]>()
 
 function font(style: CaptionStyle, size: number): string {
-  return `${style.weight} ${size}px ${style.font}, "Noto Sans Devanagari", "Noto Sans", sans-serif`
+  const family = style.font === 'system-ui' ? 'system-ui' : `"${style.font}"`
+  return `${style.weight} ${size}px ${family}, "Noto Sans Devanagari", "Noto Sans", sans-serif`
 }
 
 function wordText(text: string, style: CaptionStyle): string {
   return style.allCaps ? text.toLocaleUpperCase() : text
 }
 
-function layoutGroup(ctx: Ctx, group: CaptionGroup, style: CaptionStyle, size: number): Line[] {
+/** Word gap; wider when the spoken word grows, so it never runs into its neighbour. */
+function wordGap(ctx: Ctx, style: CaptionStyle): number {
+  const space = ctx.measureText(' ').width
+  return style.animation === 'scale' ? space + ctx.measureText('M').width * (style.scale - 1) : space
+}
+
+function layoutGroup(ctx: Ctx, group: CaptionGroup, style: CaptionStyle, size: number, maxWidth: number): Line[] {
   const cached = layoutCache.get(group)
   if (cached) return cached
   ctx.font = font(style, size)
-  const space = ctx.measureText(' ').width
-  const maxWidth = OUT_W * 0.86
+  const space = wordGap(ctx, style)
   const lines: Line[] = []
   let line: Line = { words: [], width: 0 }
   group.words.forEach((w, index) => {
@@ -124,17 +161,25 @@ function layoutGroup(ctx: Ctx, group: CaptionGroup, style: CaptionStyle, size: n
   return lines
 }
 
-export function drawCaptions(ctx: Ctx, groups: CaptionGroup[], t: number, style: CaptionStyle) {
+export function drawCaptions(ctx: Ctx, groups: CaptionGroup[], t: number, style: CaptionStyle, frame: Frame) {
   if (style.key === 'none') return
   const g = groupAt(groups, t)
   if (g < 0) return
   const group = groups[g]!
-  const size = Math.round(OUT_H * style.sizeRatio)
-  const lines = layoutGroup(ctx, group, style, size)
+  const W = frame.w
+  const H = frame.h
+  // Sizes are authored for 9:16; keep text the same physical size on other shapes.
+  const size = Math.round(Math.min(H, W * (16 / 9)) * style.sizeRatio)
+  const lines = layoutGroup(ctx, group, style, size, W * 0.86)
   const lineHeight = size * 1.18
-  const space = (ctx.font = font(style, size), ctx.measureText(' ').width)
-  const bottom = OUT_H * (1 - style.marginRatio)
-  const top = bottom - lineHeight * lines.length
+  const space = (ctx.font = font(style, size), wordGap(ctx, style))
+  const block = lineHeight * lines.length
+  // Keep the caption inside the area the platform's buttons don't cover.
+  const minTop = H * frame.safeTop
+  const maxBottom = H * (1 - frame.safeBottom)
+  let bottom = H * (1 - style.marginRatio)
+  bottom = Math.min(maxBottom, Math.max(minTop + block, bottom))
+  const top = bottom - block
 
   ctx.textBaseline = 'alphabetic'
   ctx.lineJoin = 'round'
@@ -142,7 +187,7 @@ export function drawCaptions(ctx: Ctx, groups: CaptionGroup[], t: number, style:
 
   lines.forEach((line, li) => {
     const baseline = top + lineHeight * (li + 1) - size * 0.2
-    let x = (OUT_W - line.width) / 2
+    let x = (W - line.width) / 2
     if (style.boxed) {
       ctx.fillStyle = style.boxColour
       const pad = size * 0.22

@@ -317,6 +317,8 @@ export interface ScoringItem {
   contextLast: number
   durationS: number
   momentType: MomentType
+  /** Measured loudness 0..1; mentioned to the model when the room clearly reacts. */
+  energy?: number
 }
 
 export interface ScoringRequest {
@@ -350,10 +352,10 @@ export const scoring: CapabilitySpec<ScoringRequest, Map<string, Scores>> = {
           i.sentences
             ? `### candidate_id: ${i.id}\nProposed clip: sentences s${i.candidateFirst}-s${i.candidateLast} ` +
               `(${Math.round(i.durationS)} s). Context shown: s${i.contextFirst}-s${i.contextLast}. ` +
-              `Proposed type: ${i.momentType}.\n${i.taggedText}`
+              `Proposed type: ${i.momentType}.${(i.energy ?? 0) >= 0.5 ? ' Audio: loud, excited (laughter, shouting or hype).' : ''}\n${i.taggedText}`
             : `### candidate_id: ${i.id}\nProposed clip: words ${i.candidateFirst}-${i.candidateLast} ` +
               `(${Math.round(i.durationS)} s). Context shown: words ${i.contextFirst}-${i.contextLast}. ` +
-              `Proposed type: ${i.momentType}.\n${i.taggedText}`,
+              `Proposed type: ${i.momentType}.${(i.energy ?? 0) >= 0.5 ? ' Audio: loud, excited (laughter, shouting or hype).' : ''}\n${i.taggedText}`,
       )
       .join('\n\n'),
   parse: (reply, p) => {
@@ -422,15 +424,29 @@ export interface JudgmentRequest {
   finalists: FinalistItem[]
   target: number
   contentType: ContentType
+  /** Titles of this creator's past clips they posted / passed on (the learning loop). */
+  examples?: { posted: string[]; skipped: string[] }
+}
+
+function examplesBlock(examples: JudgmentRequest['examples']): string {
+  if (!examples || (!examples.posted.length && !examples.skipped.length)) return ''
+  const list = (items: string[]) => items.map((t) => `- ${t}`).join('\n')
+  return (
+    'This creator\'s taste, from their past clips:\n' +
+    (examples.posted.length ? `They POSTED:\n${list(examples.posted)}\n` : '') +
+    (examples.skipped.length ? `They PASSED ON:\n${list(examples.skipped)}\n` : '') +
+    'Favour moments like the ones they posted.\n\n'
+  )
 }
 
 export const judgment: CapabilitySpec<JudgmentRequest, Map<string, Verdict>> = {
   name: 'final_judgment',
-  prompt: 'judgment_v2',
+  prompt: 'judgment_v3',
   temperature: 0.2,
-  maxTokens: (p) => 1000 + 180 * p.finalists.length,
+  maxTokens: (p) => 1000 + 260 * p.finalists.length,
   render: (p) =>
     `Content type: ${p.contentType}. The editor will publish ${p.target} clips from this video.\n` +
+    examplesBlock(p.examples) +
     `${p.finalists.length} finalists follow.\n\n` +
     p.finalists
       .map(
@@ -449,11 +465,18 @@ export const judgment: CapabilitySpec<JudgmentRequest, Map<string, Verdict>> = {
       const keep = raw.keep
       if (score === null || typeof keep !== 'boolean') continue
       const same = Array.isArray(raw.same_story_as) ? raw.same_story_as : []
+      const tags = Array.isArray(raw.hashtags) ? raw.hashtags : []
       out.set(raw.candidate_id, {
         keep,
         score,
         title: text(raw.title, 80),
         reason: text(raw.reason, 300),
+        postCaption: text(raw.post_caption, 300) || undefined,
+        hashtags: tags
+          .filter((h): h is string => typeof h === 'string')
+          .map((h) => `#${h.replace(/^#+/, '').replace(/\s+/g, '')}`)
+          .filter((h) => h.length > 1)
+          .slice(0, 8),
         sameStoryAs: same.filter(
           (s): s is string => typeof s === 'string' && known.has(s) && s !== raw.candidate_id,
         ),

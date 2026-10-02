@@ -34,6 +34,7 @@ import { type AIManager, CapabilityUnavailable } from './manager'
 import { mapPool } from './pool'
 import { type Pick, MAX_OVERLAP, compositeScore, explain, pairKey, select } from './selection'
 import type { Silence, Transcript } from './transcript'
+import { medianEnergy, momentEnergy } from './details'
 import { buildWindows, candidatesPerWindow } from './windows'
 
 const DISCOVERY_CONCURRENCY = 3
@@ -64,11 +65,17 @@ export interface FunnelOptions {
   store: Store
   log?: (message: string) => void
   signal?: AbortSignal
+  /** Loudness per 20 ms of the whole video (dBFS), for the energy signal. */
+  energy?: Float32Array
+  /** The creator's posted / passed-on clip titles, for the final judge. */
+  examples?: { posted: string[]; skipped: string[] }
 }
 
 export interface FunnelResult {
   picks: Pick[]
   contentType: caps.ContentType
+  /** Every evaluated moment, best first: the 'More moments' list. */
+  pool: Candidate[]
 }
 
 export class Funnel {
@@ -82,9 +89,21 @@ export class Funnel {
 
   async run(progress: Progress): Promise<FunnelResult> {
     const { candidates, contentType } = await this.discover((f, m) => progress(0.55 * f, m))
+    this.addEnergy(candidates)
     const evaluated = await this.evaluate(candidates, contentType, (f, m) => progress(0.55 + 0.35 * f, m))
     const picks = await this.select(evaluated, (f, m) => progress(0.9 + 0.1 * f, m))
-    return { picks, contentType }
+    const pool = [...evaluated].sort((a, b) => compositeScore(b) - compositeScore(a))
+    return { picks, contentType, pool }
+  }
+
+  private energyMedian: number | null = null
+
+  /** Measured loudness of each moment against the whole video. */
+  addEnergy(candidates: Candidate[]): void {
+    const energy = this.o.energy
+    if (!energy) return
+    this.energyMedian ??= medianEnergy(energy)
+    for (const c of candidates) c.energy = momentEnergy(energy, c.startS, c.endS, this.energyMedian)
   }
 
   // -------------------------------------------------------------------------
@@ -274,6 +293,7 @@ export class Funnel {
       contextLast: final,
       durationS: duration(c),
       momentType: c.momentType,
+      energy: c.energy,
     }
   }
 
@@ -336,6 +356,7 @@ export class Funnel {
             })),
             target: this.o.target,
             contentType,
+            examples: this.o.examples,
           })
           for (const [id, v] of output) stored[id] = v
         } catch (error) {
@@ -372,6 +393,7 @@ export class Funnel {
         picks.map((p) => p.candidate),
       )
       this.log(`Only ${picks.length} distinct AI clips qualified; adding filler from ${extra.length} windows.`)
+      this.addEnergy(extra)
       for (const c of extra) texts.set(c.id, textOf(this.o.transcript, c))
       picks = select([...pool, ...extra], this.o.target, { texts, duplicateRisk })
     }

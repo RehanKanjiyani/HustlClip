@@ -297,11 +297,17 @@ export interface PlanInput {
   cuts?: number[]
   /** Streams/gaming: allow the facecam split layout. */
   allowSplit?: boolean
+  /** Output shape (any units, e.g. 1080x1920); default 9:16. */
+  outW?: number
+  outH?: number
 }
 
 export function planReframe(input: PlanInput): ReframePlan {
   const { sourceW, sourceH, duration } = input
-  const [cw, ch] = cropSize(sourceW, sourceH)
+  const outW = input.outW ?? 9
+  const outH = input.outH ?? 16
+  const ratio = outW / outH
+  const [cw, ch] = cropSize(sourceW, sourceH, outW, outH)
   const tracks = buildTracks(input.faces)
   const cuts = input.cuts ?? detectCuts(input.samples)
   const shots = shotsFromCuts(cuts, duration)
@@ -309,7 +315,7 @@ export function planReframe(input: PlanInput): ReframePlan {
 
   const segments: LayoutSegment[] = []
   for (const [start, end] of shots) {
-    segments.push(...planShot(start, end, tracks, sourceW, sourceH, cw, ch, sampleTimes, input.allowSplit ?? false))
+    segments.push(...planShot(start, end, tracks, sourceW, sourceH, cw, ch, sampleTimes, input.allowSplit ?? false, ratio))
   }
   // Tile the clip exactly: a gap or overlap would desync picture and sound.
   const merged = mergeSegments(segments)
@@ -331,6 +337,7 @@ function planShot(
   ch: number,
   sampleTimes: number[],
   allowSplit: boolean,
+  ratio: number,
 ): LayoutSegment[] {
   const samplesInShot = Math.max(1, sampleTimes.filter((t) => t >= start && t < end).length)
   const present = tracks
@@ -343,7 +350,7 @@ function planShot(
   if (allowSplit) {
     const cam = present.find(({ obs }) => isFacecam(obs, sourceW, sourceH, samplesInShot))
     if (cam && present.every(({ obs }) => obs === cam.obs || meanWidth(obs) < sourceW * FACECAM_MAX_WIDTH)) {
-      return [splitSegment(start, end, cam.obs, sourceW, sourceH)]
+      return [splitSegment(start, end, cam.obs, sourceW, sourceH, ratio)]
     }
   }
 
@@ -381,7 +388,7 @@ function planShot(
     }
   }
   const [first, second] = byActivity.slice(0, 2).sort((a, b) => meanX(a.obs) - meanX(b.obs))
-  return [stackSegment(start, end, first!.obs, second!.obs, sourceW, sourceH)]
+  return [stackSegment(start, end, first!.obs, second!.obs, sourceW, sourceH, ratio)]
 }
 
 function meanWidth(obs: FaceObservation[]): number {
@@ -521,9 +528,10 @@ function faceRegion(obs: FaceObservation[], aspect: number, sourceW: number, sou
   return { x, y, w, h }
 }
 
-function stackSegment(start: number, end: number, a: FaceObservation[], b: FaceObservation[], sourceW: number, sourceH: number): LayoutSegment {
+function stackSegment(start: number, end: number, a: FaceObservation[], b: FaceObservation[], sourceW: number, sourceH: number, ratio = 9 / 16): LayoutSegment {
   // Each half of a 1080x1920 canvas is 1080x960: aspect 9:8.
-  const aspect = 9 / 8
+  // Each half of the output: full width, half height.
+  const aspect = ratio * 2
   return {
     start,
     end,
@@ -534,9 +542,9 @@ function stackSegment(start: number, end: number, a: FaceObservation[], b: FaceO
   }
 }
 
-function splitSegment(start: number, end: number, cam: FaceObservation[], sourceW: number, sourceH: number): LayoutSegment {
-  const camAspect = 9 / (16 * SPLIT_CAM_SHARE)
-  const mainAspect = 9 / (16 * (1 - SPLIT_CAM_SHARE))
+function splitSegment(start: number, end: number, cam: FaceObservation[], sourceW: number, sourceH: number, ratio = 9 / 16): LayoutSegment {
+  const camAspect = ratio / SPLIT_CAM_SHARE
+  const mainAspect = ratio / (1 - SPLIT_CAM_SHARE)
   const camRect = faceRegion(cam, camAspect, sourceW, sourceH, 3.6)
   // Main region: the centre of the frame, as wide as the aspect allows.
   let mw = sourceW
@@ -606,7 +614,7 @@ export function segmentAt(plan: ReframePlan, t: number): LayoutSegment {
 }
 
 /** A plan that is just a centred crop (no face analysis). */
-export function centrePlan(sourceW: number, sourceH: number, duration: number): ReframePlan {
-  const [cw, ch] = cropSize(sourceW, sourceH)
+export function centrePlan(sourceW: number, sourceH: number, duration: number, outW = 9, outH = 16): ReframePlan {
+  const [cw, ch] = cropSize(sourceW, sourceH, outW, outH)
   return { sourceW, sourceH, segments: [centre(0, duration, sourceW, sourceH, cw, ch, 'Centre crop')] }
 }

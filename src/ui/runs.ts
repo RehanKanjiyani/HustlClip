@@ -7,7 +7,7 @@
 
 import type { ProviderId } from '../../shared/models'
 import { JobRunner, sameFile } from '../pipeline/job'
-import { type JobRecord, jobs } from '../lib/store'
+import { type JobRecord, files, jobs } from '../lib/store'
 
 const pickedFiles = new Map<string, File>()
 const runners = new Map<string, JobRunner>()
@@ -56,6 +56,41 @@ export async function start(jobId: string, providers: ProviderId[]): Promise<voi
 
 export function pause(jobId: string) {
   runners.get(jobId)?.cancel()
+}
+
+/**
+ * Changes a finished (or paused) job and re-renders only what changed: the
+ * mutation clears `file` on the clips to redo; their old videos are deleted
+ * and the normal runner renders them again, skipping every finished step.
+ * Returns 'needs-file' when the video must be picked again first.
+ */
+export async function redo(
+  jobId: string,
+  providers: ProviderId[],
+  mutate: (job: JobRecord) => void,
+): Promise<'started' | 'needs-file' | 'busy'> {
+  if (runners.has(jobId)) return 'busy'
+  const job = await jobs.get(jobId)
+  if (!job) return 'busy'
+  const before = new Map(job.clips.map((c) => [c.id, c.file]))
+  mutate(job)
+  for (const clip of job.clips) {
+    const old = before.get(clip.id)
+    if (old && clip.file !== old) await files.remove(job.id, old)
+  }
+  const pending = job.clips.filter((c) => !c.file).length
+  Object.assign(job, {
+    status: 'paused',
+    error: null,
+    stage: 'make',
+    progress: Math.min(job.progress, 0.55 + 0.45 * ((job.clips.length - pending) / Math.max(1, job.clips.length))),
+    message: `${pending} clip${pending === 1 ? '' : 's'} to render`,
+  })
+  await jobs.put(job)
+  emit(job)
+  if (!pickedFiles.get(jobId)) return 'needs-file'
+  void start(jobId, providers)
+  return 'started'
 }
 
 /** Removes the copy of a video that was shared into HustlClip, once it's no longer needed. */

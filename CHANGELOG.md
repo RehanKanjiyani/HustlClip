@@ -2,6 +2,22 @@
 
 Notable changes. Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 2.1.0: editing and creator tools, 2026-10-02
+
+### Added
+
+- **Post text per clip:** the final judge writes a post caption (opening with the hook) and hashtags; a built-in fallback covers clips it didn't judge. Copy or share with the clip.
+- **Score and plain-language reasons** per clip.
+- **Trim by sentence** and re-render a single clip; **More moments** to add a runner-up as an extra clip; **Restyle** all clips. All reuse finished work.
+- **Caption studio / brand kit:** font, text and highlight colour, size, position, caps; saved on the phone.
+- **Shapes:** 9:16, 4:5 and 1:1, with captions kept clear of each platform's on-screen buttons.
+- **Audio-energy signal:** loud, excited moments (laughter, shouting, hype) get a small ranking bonus, a hint to the scorer, and a reason tag.
+- **Learning loop:** "Posted" / "Not this one" per clip; recent choices are shown to the final judge as the creator's taste.
+- **Slow zoom** on still shots; **.vtt** caption files; elapsed time, time left, current AI model and token use on the job screen.
+
+### Not included
+
+- Posting straight to YouTube, TikTok or Instagram (needs developer apps approved by each platform), chat-velocity (needs the stream's chat log), stock B-roll (needs a paid library).
 ## 2.0.2: long videos, 2026-10-01
 
 ### Fixed

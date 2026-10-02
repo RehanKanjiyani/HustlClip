@@ -1,6 +1,6 @@
 /**
  * Rendering one clip: decode the source range, draw each frame into a
- * 1080x1920 canvas (layout + captions), encode H.264 with the phone's video
+ * canvas of the chosen shape (layout + captions), encode H.264 with the phone's video
  * chip, and mux with the clip's audio into an MP4.
  */
 
@@ -9,7 +9,7 @@ import { BufferTarget, Conversion, Mp4OutputFormat, Output, Quality, canEncodeAu
 import { type CaptionStyle, groupWords } from '../engine/captions'
 import { type ReframePlan, segmentAt } from '../engine/reframe'
 import type { Word } from '../engine/transcript'
-import { OUT_H, OUT_W, drawCaptions, drawLayout, loadCaptionFonts } from './draw'
+import { type Frame, drawCaptions, drawLayout, loadCaptionFonts } from './draw'
 import type { Source } from './source'
 
 const VIDEO_BITRATE = 8_000_000
@@ -22,6 +22,9 @@ export interface RenderInput {
   /** Clip-relative words. */
   words: Word[]
   style: CaptionStyle
+  frame: Frame
+  /** Slow push-in on still shots. */
+  zoom?: boolean
   onProgress: (fraction: number) => void
   signal?: AbortSignal
 }
@@ -48,6 +51,7 @@ export async function renderClip(input: RenderInput): Promise<Uint8Array> {
   if (!source.video) throw new Error('This file has no video to render.')
   await loadCaptionFonts()
 
+  const { w: OUT_W, h: OUT_H } = input.frame
   const canvas = new OffscreenCanvas(OUT_W, OUT_H)
   const ctx = canvas.getContext('2d', { alpha: false })!
   ctx.imageSmoothingQuality = 'high'
@@ -72,8 +76,8 @@ export async function renderClip(input: RenderInput): Promise<Uint8Array> {
         const t = Math.max(0, sample.timestamp)
         ctx.fillStyle = '#000'
         ctx.fillRect(0, 0, OUT_W, OUT_H)
-        drawLayout(ctx, sample, segmentAt(plan, t), t, plan.sourceW, plan.sourceH)
-        drawCaptions(ctx, groups, t, style)
+        drawLayout(ctx, sample, segmentAt(plan, t), t, plan.sourceW, plan.sourceH, input.frame, input.zoom ?? true)
+        drawCaptions(ctx, groups, t, style, input.frame)
         return canvas
       },
     },
